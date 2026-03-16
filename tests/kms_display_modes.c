@@ -182,9 +182,9 @@ static void run_extendedmode_basic(data_t *data, igt_crtc_t *crtc1,
 		for_each_if ((((output) = &(display)->outputs[j__]), \
 			      igt_output_is_connected((output))))
 
-#define for_each_valid_output_on_crtc_local(display, crtc, output) \
+#define for_each_valid_output_on_pipe_local(display, pipe, output) \
 	for_each_connected_output_local((display), (output)) \
-		for_each_if (igt_crtc_connector_valid((crtc), (output)))
+		for_each_if (igt_pipe_connector_valid((pipe), (output)))
 
 static void run_extendedmode_test(data_t *data) {
 	igt_crtc_t *crtc2;
@@ -196,15 +196,14 @@ static void run_extendedmode_test(data_t *data) {
 	igt_display_reset(display);
 
 	for_each_crtc(display, crtc) {
-		for_each_valid_output_on_crtc(display,
-					      crtc,
-					      output1) {
+		for_each_valid_output_on_pipe(display, crtc->pipe, output1) {
 
 			for_each_crtc(display, crtc2) {
-				if (crtc == crtc2)
+				if (crtc->pipe == crtc2->pipe)
 					continue;
 
-				for_each_valid_output_on_crtc_local(display, crtc2,
+				for_each_valid_output_on_pipe_local(display,
+								    crtc2->pipe,
 								    output2) {
 					if (output1 == output2)
 						continue;

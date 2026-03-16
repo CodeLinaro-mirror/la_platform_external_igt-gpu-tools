@@ -1171,9 +1171,11 @@ static void test_output(data_t *data, const int testnum)
 						igt_info("Testing with seed %d\n", data->seed);
 
 					if (data->flags & TEST_ALL_PLANES) {
-						igt_display_require_output_on_crtc(crtc);
+						igt_display_require_output_on_pipe(&data->display,
+										   crtc->pipe);
 
-						for_each_plane_on_crtc(crtc,
+						for_each_plane_on_pipe(&data->display,
+								       crtc->pipe,
 								       data->plane) {
 							if (skip_plane(data, data->plane))
 								continue;

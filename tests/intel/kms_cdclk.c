@@ -118,10 +118,9 @@ static void do_cleanup_display(igt_display_t *dpy)
 	igt_output_t *output;
 	igt_plane_t *plane;
 
-	for_each_crtc(dpy, crtc) {
-		for_each_plane_on_crtc(crtc, plane)
+	for_each_crtc(dpy, crtc)
+		for_each_plane_on_pipe(dpy, crtc->pipe, plane)
 			igt_plane_set_fb(plane, NULL);
-	}
 
 	for_each_connected_output(dpy, output)
 		igt_output_set_crtc(output, NULL);
@@ -240,10 +239,12 @@ static void set_mode(data_t *data, int count, drmModeModeInfo *mode,
 		     igt_output_t **valid_outputs, struct igt_fb fb)
 {
 	igt_display_t *display = &data->display;
+	igt_crtc_t *crtc;
+	igt_plane_t *plane;
 
 	for (int i = 0; i < count; i++) {
-		igt_crtc_t *crtc = igt_crtc_for_pipe(display, i);
-		igt_plane_t *plane = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY);
+		crtc = igt_crtc_for_pipe(display, i);
+		plane = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY);
 
 		igt_output_override_mode(valid_outputs[i], &mode[i]);
 
@@ -288,15 +289,14 @@ static void test_mode_transition_on_all_outputs(data_t *data)
 		      "Number of valid outputs (%d) must be greater than or equal to 2\n", count);
 
 	for (int i = 0; i < count; i++) {
-		igt_crtc_t *crtc = igt_crtc_for_pipe(display, i);
-
 		mode = igt_output_get_mode(valid_outputs[i]);
 		igt_assert(mode);
 
 		width = max(width, mode->hdisplay);
 		height = max(height, mode->vdisplay);
 
-		igt_output_set_crtc(valid_outputs[i], crtc);
+		igt_output_set_crtc(valid_outputs[i],
+				    igt_crtc_for_pipe(display, i));
 		igt_output_override_mode(valid_outputs[i], &mode_highres[i]);
 	}
 

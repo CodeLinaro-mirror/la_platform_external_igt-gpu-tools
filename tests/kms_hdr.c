@@ -251,7 +251,7 @@ static void test_bpc_switch_on_output(data_t *data, igt_crtc_t *crtc,
 	 * smaller plane size in following tests.
 	 */
 	igt_plane_set_fb(data->primary, &afb);
-	if (igt_crtc_num_scalers(crtc) >= 1)
+	if (get_num_scalers(display, crtc->pipe) >= 1)
 		igt_plane_set_size(data->primary, data->w, data->h);
 	else
 		igt_plane_set_size(data->primary, 512, 512);
@@ -265,8 +265,7 @@ static void test_bpc_switch_on_output(data_t *data, igt_crtc_t *crtc,
 	/* Start in 8bpc. */
 	igt_output_set_prop_value(data->output, IGT_CONNECTOR_MAX_BPC, 8);
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 8);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 8);
 
 	/*
 	 * amdgpu requires a primary plane when the CRTC is enabled.
@@ -280,8 +279,7 @@ static void test_bpc_switch_on_output(data_t *data, igt_crtc_t *crtc,
 	/* Switch to 10bpc. */
 	igt_output_set_prop_value(data->output, IGT_CONNECTOR_MAX_BPC, 10);
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 10);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 10);
 
 	/* Verify that the CRC are equal after DPMS or suspend. */
 	igt_pipe_crc_collect_crc(data->pipe_crc, &ref_crc);
@@ -291,8 +289,7 @@ static void test_bpc_switch_on_output(data_t *data, igt_crtc_t *crtc,
 	/* Drop back to 8bpc. */
 	igt_output_set_prop_value(data->output, IGT_CONNECTOR_MAX_BPC, 8);
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 8);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 8);
 
 	/* CRC capture is clamped to 8bpc, so capture should match. */
 	igt_assert_crc_equal(&ref_crc, &new_crc);
@@ -324,7 +321,7 @@ static void test_bpc_switch(data_t *data, uint32_t flags)
 			continue;
 		}
 
-		if (igt_get_output_max_bpc(output) < 10) {
+		if (igt_get_output_max_bpc(data->fd, output->name) < 10) {
 			igt_info("%s: Doesn't support 10 bpc.\n", igt_output_name(output));
 			continue;
 		}
@@ -341,7 +338,7 @@ static void test_bpc_switch(data_t *data, uint32_t flags)
 				     crtc);
 
 			if (is_intel_device(data->fd) &&
-			    !igt_max_bpc_constraint(display, crtc, output, 10)) {
+			    !igt_max_bpc_constraint(display, crtc->pipe, output, 10)) {
 				igt_info("%s: No suitable mode found to use 10 bpc.\n",
 					 igt_output_name(output));
 
@@ -504,8 +501,7 @@ static void test_static_toggle(data_t *data, igt_crtc_t *crtc,
 	}
 
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 8);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 8);
 
 	if (flags & TEST_NEEDS_DSC) {
 		igt_force_dsc_disable(data->fd, output->name);
@@ -526,8 +522,7 @@ static void test_static_toggle(data_t *data, igt_crtc_t *crtc,
 		adjust_brightness(data, flags);
 	}
 
-	igt_assert_output_bpc_equal(crtc,
-				    output, 10);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 10);
 
 	/* Verify that the CRC are equal after DPMS or suspend. */
 	igt_pipe_crc_collect_crc(data->pipe_crc, &ref_crc);
@@ -544,8 +539,7 @@ static void test_static_toggle(data_t *data, igt_crtc_t *crtc,
 	}
 
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 8);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 8);
 
 	igt_assert_crc_equal(&ref_crc, &new_crc);
 
@@ -616,8 +610,7 @@ static void test_static_swap(data_t *data, igt_crtc_t *crtc,
 	}
 
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 8);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 8);
 
 	if (flags & TEST_NEEDS_DSC) {
 		igt_force_dsc_disable(data->fd, output->name);
@@ -629,8 +622,7 @@ static void test_static_swap(data_t *data, igt_crtc_t *crtc,
 	set_hdr_output_metadata(data, &hdr);
 	igt_output_set_prop_value(data->output, IGT_CONNECTOR_MAX_BPC, 10);
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 10);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 10);
 
 	igt_pipe_crc_collect_crc(data->pipe_crc, &ref_crc);
 
@@ -667,8 +659,7 @@ static void test_static_swap(data_t *data, igt_crtc_t *crtc,
 	set_hdr_output_metadata(data, NULL);
 	igt_output_set_prop_value(data->output, IGT_CONNECTOR_MAX_BPC, 8);
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	igt_assert_output_bpc_equal(crtc,
-				    output, 8);
+	igt_assert_output_bpc_equal(data->fd, crtc->pipe, output->name, 8);
 
 	/* Verify that the CRC didn't change while cycling metadata. */
 	igt_assert_crc_equal(&ref_crc, &new_crc);
@@ -737,7 +728,7 @@ static void test_hdr(data_t *data, uint32_t flags)
 			continue;
 		}
 
-		if (igt_get_output_max_bpc(output) < 10) {
+		if (igt_get_output_max_bpc(data->fd, output->name) < 10) {
 			igt_info("%s: Doesn't support 10 bpc.\n", igt_output_name(output));
 			continue;
 		}
@@ -771,7 +762,7 @@ static void test_hdr(data_t *data, uint32_t flags)
 			}
 
 			if (is_intel_device(data->fd) &&
-			    !igt_max_bpc_constraint(display, crtc, output, 10)) {
+			    !igt_max_bpc_constraint(display, crtc->pipe, output, 10)) {
 				igt_info("%s: No suitable mode found to use 10 bpc.\n",
 					 igt_output_name(output));
 

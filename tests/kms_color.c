@@ -637,8 +637,7 @@ static void test_pipe_limited_range_ctm(data_t *data,
 	degamma_linear = generate_table(data->degamma_lut_size, 1.0);
 	gamma_linear = generate_table(data->gamma_lut_size, 1.0);
 
-	for_each_valid_output_on_crtc(&data->display,
-				      primary->crtc,
+	for_each_valid_output_on_pipe(&data->display, primary->crtc->pipe,
 				      output) {
 		drmModeModeInfo *mode;
 		struct igt_fb fb_modeset, fb;
@@ -712,8 +711,10 @@ static void test_pipe_limited_range_ctm(data_t *data,
 #endif
 
 static void
-prep_crtc(data_t *data, igt_crtc_t *crtc)
+prep_pipe(data_t *data, igt_crtc_t *crtc)
 {
+	igt_require_pipe(&data->display, crtc->pipe);
+
 	if (igt_crtc_has_prop(crtc, IGT_CRTC_DEGAMMA_LUT_SIZE)) {
 		data->degamma_lut_size =
 			igt_crtc_get_prop(crtc,
@@ -731,7 +732,7 @@ prep_crtc(data_t *data, igt_crtc_t *crtc)
 
 static void test_setup(data_t *data, igt_crtc_t *crtc)
 {
-	prep_crtc(data, crtc);
+	prep_pipe(data, crtc);
 	igt_require_pipe_crc(data->drm_fd);
 	igt_require(crtc->n_planes >= 0);
 
@@ -749,7 +750,7 @@ static void test_cleanup(data_t *data)
 }
 
 static void
-run_gamma_degamma_tests_for_crtc(data_t *data, igt_crtc_t *crtc,
+run_gamma_degamma_tests_for_pipe(data_t *data, igt_crtc_t *crtc,
 				 bool (*test_t)(data_t*, igt_plane_t*))
 {
 	test_setup(data, crtc);
@@ -762,7 +763,7 @@ run_gamma_degamma_tests_for_crtc(data_t *data, igt_crtc_t *crtc,
 	data->drm_format = DRM_FORMAT_XRGB8888;
 	data->mode = igt_output_get_mode(data->output);
 
-	igt_require(crtc_output_combo_valid(data, crtc));
+	igt_require(pipe_output_combo_valid(data, crtc));
 
 	igt_assert(test_t(data, data->primary));
 
@@ -779,7 +780,7 @@ static void transform_color(color_t *color, const double *ctm, double offset)
 }
 
 static void
-run_ctm_tests_for_crtc(data_t *data, igt_crtc_t *crtc,
+run_ctm_tests_for_pipe(data_t *data, igt_crtc_t *crtc,
 		       const color_t *fb_colors,
 		       const double *ctm,
 		       int iter)
@@ -804,7 +805,7 @@ run_ctm_tests_for_crtc(data_t *data, igt_crtc_t *crtc,
 	data->drm_format = depth_10bit ? DRM_FORMAT_XRGB2101010 : DRM_FORMAT_XRGB8888;
 	data->mode = igt_output_get_mode(data->output);
 
-	igt_require(crtc_output_combo_valid(data, crtc));
+	igt_require(pipe_output_combo_valid(data, crtc));
 
 	if (!iter)
 		iter = 1;
@@ -838,7 +839,7 @@ run_ctm_tests_for_crtc(data_t *data, igt_crtc_t *crtc,
 }
 
 static void
-run_deep_color_tests_for_crtc(data_t *data, igt_crtc_t *crtc)
+run_deep_color_tests_for_pipe(data_t *data, igt_crtc_t *crtc)
 {
 	igt_output_t *output;
 	static const color_t blue_green_blue[] = {
@@ -863,9 +864,7 @@ run_deep_color_tests_for_crtc(data_t *data, igt_crtc_t *crtc)
 
 	test_setup(data, crtc);
 
-	for_each_valid_output_on_crtc(&data->display,
-				      crtc,
-				      output) {
+	for_each_valid_output_on_pipe(&data->display, crtc->pipe, output) {
 		uint64_t max_bpc = get_max_bpc(output);
 		bool ret;
 
@@ -875,7 +874,7 @@ run_deep_color_tests_for_crtc(data_t *data, igt_crtc_t *crtc)
 			continue;
 		}
 
-		if (!panel_supports_deep_color(output)) {
+		if (!panel_supports_deep_color(data->drm_fd, output->name)) {
 			igt_info("Output %s: Doesn't support deep-color.\n",
 				 igt_output_name(output));
 			continue;
@@ -900,7 +899,7 @@ run_deep_color_tests_for_crtc(data_t *data, igt_crtc_t *crtc)
 				    crtc);
 
 		if (is_intel_device(data->drm_fd) &&
-		    !igt_max_bpc_constraint(&data->display, crtc, output, 10)) {
+		    !igt_max_bpc_constraint(&data->display, crtc->pipe, output, 10)) {
 			igt_info("Output %s: Doesn't support 10-bpc.\n",
 				 igt_output_name(output));
 			continue;
@@ -982,7 +981,7 @@ run_invalid_tests_for_pipe(data_t *data)
 		igt_subtest_with_dynamic_f("%s", tests[i].name) {
 			for_each_crtc(&data->display, crtc) {
 				igt_dynamic_f("pipe-%s", igt_crtc_name(crtc)) {
-					prep_crtc(data,
+					prep_pipe(data,
 						  crtc);
 					tests[i].test_t(data,
 							crtc);
@@ -1128,7 +1127,7 @@ run_tests_for_pipe(data_t *data)
 			for_each_crtc_with_valid_output(&data->display, crtc, data->output) {
 				igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
 					      igt_output_name(data->output))
-					run_gamma_degamma_tests_for_crtc(data,
+					run_gamma_degamma_tests_for_pipe(data,
 									 crtc,
 									 gamma_degamma_tests[i].test_t);
 			}
@@ -1141,7 +1140,7 @@ run_tests_for_pipe(data_t *data)
 			for_each_crtc_with_valid_output(&data->display, crtc, data->output) {
 				igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
 					      igt_output_name(data->output))
-					run_ctm_tests_for_crtc(data,
+					run_ctm_tests_for_pipe(data,
 							       crtc,
 							       ctm_tests[i].fb_colors,
 							       ctm_tests[i].ctm,
@@ -1158,7 +1157,7 @@ run_tests_for_pipe(data_t *data)
 	igt_describe("Verify that deep color works correctly");
 	igt_subtest_with_dynamic("deep-color") {
 		for_each_crtc(&data->display, crtc) {
-			run_deep_color_tests_for_crtc(data,
+			run_deep_color_tests_for_pipe(data,
 						      crtc);
 
 			if (igt_run_in_simulation())

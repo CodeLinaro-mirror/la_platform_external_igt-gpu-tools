@@ -569,8 +569,7 @@ static bool test_pipe(data_t *data)
 	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	for_each_plane_on_crtc(data->crtc,
-			       data->plane) {
+	for_each_plane_on_pipe(&data->display, data->crtc->pipe, data->plane) {
 		ret = test_plane(data);
 		if (ret || run_in_simulation)
 			break;

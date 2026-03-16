@@ -379,8 +379,8 @@ int igt_main()
 
 				data.crtc = crtc;
 
-				for_each_valid_output_on_crtc(&data.display,
-							      crtc,
+				for_each_valid_output_on_pipe(&data.display,
+							      crtc->pipe,
 							      data.output) {
 					data.mode = igt_output_get_mode(data.output);
 

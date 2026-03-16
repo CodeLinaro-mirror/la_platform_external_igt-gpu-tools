@@ -63,11 +63,12 @@ static void test_init(data_t *data)
 	igt_display_t *display = &data->display;
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->crtc = igt_first_crtc(&data->display);
+	data->crtc = igt_crtc_for_pipe(&data->display, PIPE_A);
 
 	igt_display_reset(display);
 
-	data->output = igt_get_single_output_for_crtc(data->crtc);
+	data->output = igt_get_single_output_for_pipe(display,
+						      data->crtc->pipe);
 	igt_assert(data->output);
 
 	if (data->output->config.connector->connector_type == DRM_MODE_CONNECTOR_eDP) {
@@ -345,7 +346,7 @@ static void bypass_8bpc_test(data_t *data)
 	 * Rx supports only up to 6bpc, Rx-crc will different from crtc-crc
 	 * with 8bpc.
 	 */
-	igt_skip_on_f(igt_get_output_max_bpc(data->output) <= 6,
+	igt_skip_on_f(igt_get_output_max_bpc(data->drm_fd, data->output->name) <= 6,
 		      "check /sys/kernel/debug/dri/0/eDP-1 (connector)/output_bpc\n");
 
 	igt_create_fb(data->drm_fd, data->width, data->height,
