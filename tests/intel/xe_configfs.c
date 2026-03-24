@@ -55,6 +55,7 @@ static void restore(int sig)
 {
 	int configfs_fd;
 
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	/* Drop all custom configfs settings from subtests */
@@ -69,6 +70,7 @@ static void restore(int sig)
 
 static void set_survivability_mode(int configfs_device_fd, bool value)
 {
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 	igt_sysfs_set_boolean(configfs_device_fd, "survivability_mode", value);
 	igt_kmod_bind("xe", bus_addr);
@@ -113,6 +115,7 @@ static void test_engines_allowed_invalid(int configfs_device_fd)
 	 * These only test if engine parsing is correct, so just make sure
 	 * there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -139,6 +142,7 @@ static void test_engines_allowed(int configfs_device_fd)
 	 * These only test if engine parsing is correct, so just make sure
 	 * there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -169,6 +173,7 @@ static void test_gt_types_allowed(int configfs_device_fd)
 	 * These only test if gt type parsing is correct, so just make sure
 	 * there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -231,6 +236,7 @@ static void test_ctx_restore_invalid(int configfs_device_fd, const char *type)
 	 * These only test if command parsing is correct,
 	 * so just make sure there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -310,6 +316,7 @@ static void test_ctx_restore(int configfs_device_fd, const char *type)
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
 		const struct value *v = &values[i];
 
+		igt_audio_driver_unload(NULL);
 		igt_kmod_unbind("xe", bus_addr);
 
 		igt_info("Test %s\n", v->test);
@@ -346,6 +353,12 @@ static int create_device_configfs_group(int configfs_fd)
 	return configfs_device_fd;
 }
 
+static void close_configfs_group(int configfs_fd, int configfs_device_fd)
+{
+	close(configfs_device_fd);
+	igt_fs_remove_dir(configfs_fd, bus_addr);
+}
+
 int igt_main()
 {
 	int fd, configfs_fd, configfs_device_fd;
@@ -361,7 +374,6 @@ int igt_main()
 
 		configfs_fd = igt_configfs_open("xe");
 		igt_require(configfs_fd != -1);
-		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		igt_install_exit_handler(restore);
 	}
 
@@ -369,39 +381,61 @@ int igt_main()
 	igt_subtest("survivability-mode") {
 		igt_require(IS_BATTLEMAGE(devid));
 		igt_require_f(!is_vf_device, "survivability mode not supported in VF\n");
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_survivability_mode(configfs_device_fd);
+		close_configfs_group(configfs_fd, configfs_device_fd);
 	}
 
 	igt_describe("Validate engines_allowed with invalid options");
-	igt_subtest("engines-allowed-invalid")
+	igt_subtest("engines-allowed-invalid") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_engines_allowed_invalid(configfs_device_fd);
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_describe("Validate engines_allowed");
-	igt_subtest("engines-allowed")
+	igt_subtest("engines-allowed") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_engines_allowed(configfs_device_fd);
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_describe("Validate gt_types_allowed");
-	igt_subtest("gt-types-allowed")
+	igt_subtest("gt-types-allowed") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_gt_types_allowed(configfs_device_fd);
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_describe("Validate ctx_restore_post_bb with invalid options");
-	igt_subtest("ctx-restore-post-bb-invalid")
+	igt_subtest("ctx-restore-post-bb-invalid") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore_invalid(configfs_device_fd, "post");
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_describe("Validate ctx_restore_post_bb");
-	igt_subtest("ctx-restore-post-bb")
+	igt_subtest("ctx-restore-post-bb") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore(configfs_device_fd, "post");
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_describe("Validate ctx_restore_mid_bb with invalid options");
-	igt_subtest("ctx-restore-mid-bb-invalid")
+	igt_subtest("ctx-restore-mid-bb-invalid") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore_invalid(configfs_device_fd, "mid");
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_describe("Validate ctx_restore_mid_bb");
-	igt_subtest("ctx-restore-mid-bb")
+	igt_subtest("ctx-restore-mid-bb") {
+		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore(configfs_device_fd, "mid");
+		close_configfs_group(configfs_fd, configfs_device_fd);
+	}
 
 	igt_fixture() {
-		close(configfs_device_fd);
 		close(configfs_fd);
 	}
 }

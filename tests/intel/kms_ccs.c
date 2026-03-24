@@ -177,7 +177,7 @@ typedef struct {
 	int drm_fd;
 	igt_display_t display;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	enum test_flags flags;
 	igt_plane_t *plane;
 	igt_pipe_crc_t *pipe_crc;
@@ -1039,7 +1039,8 @@ static bool try_config(data_t *data, enum test_fb_flags fb_flags,
 }
 
 static int test_ccs(data_t *data)
-{	int valid_tests = 0;
+{
+	int valid_tests = 0;
 	igt_crc_t crc, ref_crc;
 	enum test_fb_flags fb_flags = 0;
 
@@ -1052,7 +1053,7 @@ static int test_ccs(data_t *data)
 		 IGT_FORMAT_ARGS(data->format), IGT_MODIFIER_ARGS(data->ccs_modifier));
 
 	if (data->flags & TEST_CRC) {
-		data->pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe,
+		data->pipe_crc = igt_crtc_crc_new(data->crtc,
 						  IGT_PIPE_CRC_SOURCE_AUTO);
 
 		if (try_config(data, fb_flags | FB_COMPRESSED, &ref_crc) &&
@@ -1125,6 +1126,7 @@ static bool valid_modifier_test(u64 modifier, const enum test_flags flags)
 
 static void test_output(data_t *data, const int testnum)
 {
+	igt_crtc_t *crtc;
 	uint16_t dev_id;
 
 	igt_fixture()
@@ -1150,14 +1152,18 @@ static void test_output(data_t *data, const int testnum)
 					      "Older than Xe2 platform needed.\n");
 			}
 
-			for_each_pipe_with_valid_output(&data->display, data->pipe, data->output) {
+			for_each_crtc_with_valid_output(&data->display, crtc,
+							data->output) {
+				data->crtc = crtc;
 				igt_display_reset(&data->display);
 
-				igt_output_set_pipe(data->output, data->pipe);
+				igt_output_set_crtc(data->output,
+						    crtc);
 				if (!intel_pipe_output_combo_valid(&data->display))
 					continue;
 
-				igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(data->pipe),
+				igt_dynamic_f("pipe-%s-%s",
+							    igt_crtc_name(crtc),
 							    data->output->name) {
 					int valid_tests = 0;
 
@@ -1165,9 +1171,12 @@ static void test_output(data_t *data, const int testnum)
 						igt_info("Testing with seed %d\n", data->seed);
 
 					if (data->flags & TEST_ALL_PLANES) {
-						igt_display_require_output_on_pipe(&data->display, data->pipe);
+						igt_display_require_output_on_pipe(&data->display,
+										   crtc->pipe);
 
-						for_each_plane_on_pipe(&data->display, data->pipe, data->plane) {
+						for_each_plane_on_pipe(&data->display,
+								       crtc->pipe,
+								       data->plane) {
 							if (skip_plane(data, data->plane))
 								continue;
 
@@ -1185,7 +1194,7 @@ static void test_output(data_t *data, const int testnum)
 					igt_require_f(valid_tests > 0,
 						      "no valid tests for %s on pipe %s\n",
 						      ccs_modifiers[i].str,
-						      kmstest_pipe_name(data->pipe));
+						      igt_crtc_name(crtc));
 				}
 			}
 		}

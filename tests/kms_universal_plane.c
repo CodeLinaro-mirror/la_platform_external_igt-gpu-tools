@@ -91,15 +91,16 @@ typedef struct {
 } gen9_test_t;
 
 static void
-functional_test_init(functional_test_t *test, igt_output_t *output, enum pipe pipe)
+functional_test_init(functional_test_t *test, igt_output_t *output,
+		     igt_crtc_t *crtc)
 {
 	data_t *data = test->data;
 	drmModeModeInfo *mode;
 
-	test->pipe_crc = igt_pipe_crc_new(data->drm_fd, pipe,
+	test->pipe_crc = igt_crtc_crc_new(crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 	igt_create_color_fb(data->drm_fd, mode->hdisplay, mode->vdisplay,
@@ -136,7 +137,7 @@ functional_test_fini(functional_test_t *test, igt_output_t *output)
 	igt_remove_fb(test->data->drm_fd, &test->red_fb);
 	igt_remove_fb(test->data->drm_fd, &test->yellow_fb);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&test->data->display, COMMIT_LEGACY);
 }
 
@@ -156,7 +157,7 @@ functional_test_fini(functional_test_t *test, igt_output_t *output)
  *   - Enable CRTC, grab CRC:6 (should be same as CRC:2)
  */
 static void
-functional_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+functional_test_pipe(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	functional_test_t test = { .data = data };
 	igt_display_t *display = &data->display;
@@ -164,7 +165,8 @@ functional_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	int num_primary = 0, num_cursor = 0;
 	int i;
 
-	functional_test_init(&test, output, pipe);
+	functional_test_init(&test, output,
+			     crtc);
 
 	/*
 	 * Make sure we have no more than one primary or cursor plane per crtc.
@@ -172,10 +174,10 @@ functional_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	 * drm_universal_plane_init(), the type enum can get interpreted as a
 	 * boolean and show up in userspace as the wrong type.
 	 */
-	for (i = 0; i < display->pipes[pipe].n_planes; i++)
-		if (display->pipes[pipe].planes[i].type == DRM_PLANE_TYPE_PRIMARY)
+	for (i = 0; i < crtc->n_planes; i++)
+		if (crtc->planes[i].type == DRM_PLANE_TYPE_PRIMARY)
 			num_primary++;
-		else if (display->pipes[pipe].planes[i].type == DRM_PLANE_TYPE_CURSOR)
+		else if (crtc->planes[i].type == DRM_PLANE_TYPE_CURSOR)
 			num_cursor++;
 
 	igt_warn_on(num_primary != 1);
@@ -254,14 +256,14 @@ functional_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	igt_pipe_crc_collect_crc(test.pipe_crc, &test.crc_7);
 
 	/* Step 11: Disable primary plane */
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(display, COMMIT_ATOMIC);
 	igt_plane_set_fb(primary, NULL);
 	igt_display_commit2(display, COMMIT_UNIVERSAL);
 
 	/* Step 12: Legacy modeset to yellow FB (CRC 8) */
 	igt_plane_set_fb(primary, &test.yellow_fb);
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	igt_display_commit2(display, COMMIT_LEGACY);
 	igt_pipe_crc_collect_crc(test.pipe_crc, &test.crc_8);
 
@@ -344,12 +346,12 @@ functional_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 }
 
 static void
-sanity_test_init(sanity_test_t *test, igt_output_t *output, enum pipe pipe)
+sanity_test_init(sanity_test_t *test, igt_output_t *output, igt_crtc_t *crtc)
 {
 	data_t *data = test->data;
 	drmModeModeInfo *mode;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 	igt_create_color_fb(data->drm_fd, mode->hdisplay, mode->vdisplay,
@@ -383,7 +385,7 @@ sanity_test_fini(sanity_test_t *test, igt_output_t *output)
 	igt_remove_fb(test->data->drm_fd, &test->undersized_fb);
 	igt_remove_fb(test->data->drm_fd, &test->blue_fb);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&test->data->display, COMMIT_LEGACY);
 }
 
@@ -394,7 +396,7 @@ sanity_test_fini(sanity_test_t *test, igt_output_t *output)
  *   - Primary plane tries to scale up
  */
 static void
-sanity_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+sanity_test_pipe(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	sanity_test_t test = { .data = data };
 	igt_plane_t *primary;
@@ -402,10 +404,11 @@ sanity_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	int i, ret;
 	int expect = 0;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	mode = igt_output_get_mode(output);
 
-	sanity_test_init(&test, output, pipe);
+	sanity_test_init(&test, output,
+			 crtc);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 
@@ -487,12 +490,13 @@ sanity_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 }
 
 static void
-pageflip_test_init(pageflip_test_t *test, igt_output_t *output, enum pipe pipe)
+pageflip_test_init(pageflip_test_t *test, igt_output_t *output,
+		   igt_crtc_t *crtc)
 {
 	data_t *data = test->data;
 	drmModeModeInfo *mode;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 	igt_create_color_fb(data->drm_fd, mode->hdisplay, mode->vdisplay,
@@ -513,12 +517,12 @@ pageflip_test_fini(pageflip_test_t *test, igt_output_t *output)
 	igt_remove_fb(test->data->drm_fd, &test->red_fb);
 	igt_remove_fb(test->data->drm_fd, &test->blue_fb);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&test->data->display, COMMIT_LEGACY);
 }
 
 static void
-pageflip_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+pageflip_test_pipe(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	pageflip_test_t test = { .data = data };
 	igt_plane_t *primary;
@@ -528,9 +532,10 @@ pageflip_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	fd_set fds;
 	int ret = 0;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
-	pageflip_test_init(&test, output, pipe);
+	pageflip_test_init(&test, output,
+			   crtc);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 
@@ -539,7 +544,7 @@ pageflip_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	igt_display_commit2(&data->display, COMMIT_LEGACY);
 
 	/* Disable the primary plane */
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 	igt_plane_set_fb(primary, NULL);
 	igt_display_commit2(&data->display, COMMIT_UNIVERSAL);
@@ -550,7 +555,7 @@ pageflip_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	 * Note that crtc->primary->fb = NULL causes flip to return EBUSY for
 	 * historical reasons...
 	 */
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	igt_assert(drmModePageFlip(data->drm_fd, output->config.crtc->crtc_id,
 				   test.red_fb.fb_id, 0, NULL) == -EBUSY);
 
@@ -565,12 +570,12 @@ pageflip_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	 * completes, which we don't have a good way to specifically test for,
 	 * but at least we can make sure that nothing blows up.
 	 */
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 	igt_assert(drmModePageFlip(data->drm_fd, output->config.crtc->crtc_id,
 				   test.red_fb.fb_id, DRM_MODE_PAGE_FLIP_EVENT,
 				   &test) == 0);
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 	igt_plane_set_fb(primary, NULL);
 	igt_display_commit2(&data->display, COMMIT_UNIVERSAL);
@@ -600,7 +605,7 @@ cursor_leak_test_fini(data_t *data,
 	for (i = 0; i < 10; i++)
 		igt_remove_fb(data->drm_fd, &curs[i]);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 }
 
 static int
@@ -628,7 +633,7 @@ intel_gem_fb_count(data_t *data)
 }
 
 static void
-cursor_leak_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+cursor_leak_test_pipe(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	igt_display_t *display = &data->display;
 	igt_plane_t *primary, *cursor;
@@ -642,7 +647,7 @@ cursor_leak_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	igt_require(display->has_cursor_plane);
 	igt_require_intel(data->drm_fd);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	mode = igt_output_get_mode(output);
 
 	/* Count GEM framebuffers before creating our cursor FB's */
@@ -703,15 +708,17 @@ cursor_leak_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 			    COMMIT_ATOMIC : COMMIT_LEGACY);
 	cursor_leak_test_fini(data, output, &background_fb, cursor_fb);
 
-	/* Since unpinning of cursor fb occurs during vblank in xe, we need
-	 * to wait atleast 1 vblank for driver to remove cursor fb. We need
-	 * 1 additional vblank because vblank event is scheduled before
-	 * unpinning. Therefore add 2 vblank wait to ensure that all
-	 * cursor-related framebuffers can be removed before counting the
-	 * framebuffer.
+	/*
+	 * Since unpinning of cursor fb occurs during vblank in Intel,
+	 * specially in case of legacy commit we need to wait atleast 1
+	 * vblank for driver to remove cursor fb. We need 1 additional
+	 * vblank because vblank event is scheduled before unpinning.
+	 * Therefore add 2 vblank wait to ensure that all cursor-related
+	 * framebuffers can be removed before counting the framebuffer.
 	 */
-	if (is_xe_device(data->drm_fd))
-		igt_wait_for_vblank_count(data->drm_fd, data->display.pipes[pipe].crtc_offset, 2);
+	if (is_intel_device(display->drm_fd))
+		igt_wait_for_vblank_count(crtc,
+					  2);
 
 	/* We should be back to the same framebuffer count as when we started */
 	count2 = intel_gem_fb_count(data);
@@ -720,12 +727,12 @@ cursor_leak_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 }
 
 static void
-gen9_test_init(gen9_test_t *test, igt_output_t *output, enum pipe pipe)
+gen9_test_init(gen9_test_t *test, igt_output_t *output, igt_crtc_t *crtc)
 {
 	data_t *data = test->data;
 	drmModeModeInfo *mode;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 	test->w = mode->hdisplay / 2;
@@ -760,7 +767,7 @@ gen9_test_fini(gen9_test_t *test, igt_output_t *output)
 	igt_remove_fb(test->data->drm_fd, &test->smallred_fb);
 	igt_remove_fb(test->data->drm_fd, &test->smallblue_fb);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&test->data->display, COMMIT_LEGACY);
 }
 
@@ -769,16 +776,16 @@ gen9_test_fini(gen9_test_t *test, igt_output_t *output)
  * windowing)
  */
 static void
-pageflip_win_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+pageflip_win_test_pipe(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	gen9_test_t test = { .data = data };
 	igt_plane_t *primary;
 
 	int ret = 0;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
-	gen9_test_init(&test, output, pipe);
+	gen9_test_init(&test, output, crtc);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 
@@ -812,17 +819,17 @@ pageflip_win_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 }
 
 static bool
-pipe_output_combo_valid(igt_display_t *display,
-			enum pipe pipe, igt_output_t *output)
+pipe_output_combo_valid(igt_display_t *display, igt_crtc_t *crtc,
+			igt_output_t *output)
 {
 	bool ret = true;
 
 	igt_display_reset(display);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	if (!intel_pipe_output_combo_valid(display))
 		ret = false;
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 
 	return ret;
 }
@@ -831,62 +838,77 @@ static void
 run_tests(data_t *data)
 {
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
 	igt_describe("Check the switching between different primary plane fbs with CRTC off");
 	igt_subtest_with_dynamic("universal-plane-functional") {
-		for_each_pipe_with_single_output(&data->display, pipe, output) {
-			if (!pipe_output_combo_valid(&data->display, pipe, output))
+		for_each_crtc_with_single_output(&data->display, crtc, output) {
+			if (!pipe_output_combo_valid(&data->display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				functional_test_pipe(data, pipe, output);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				functional_test_pipe(data,
+						     crtc,
+						     output);
 		}
 	}
 
 	igt_describe("Test for scale-up or scale-down using universal plane API without covering CRTC");
 	igt_subtest_with_dynamic("universal-plane-sanity") {
-		for_each_pipe_with_single_output(&data->display, pipe, output) {
-			if (!pipe_output_combo_valid(&data->display, pipe, output))
+		for_each_crtc_with_single_output(&data->display, crtc, output) {
+			if (!pipe_output_combo_valid(&data->display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				sanity_test_pipe(data, pipe, output);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				sanity_test_pipe(data,
+						 crtc,
+						 output);
 		}
 	}
 
 	igt_describe("Check pageflips while primary plane is disabled before IOCTL or between IOCTL"
 		     " and pageflip execution");
 	igt_subtest_with_dynamic("disable-primary-vs-flip") {
-		for_each_pipe_with_single_output(&data->display, pipe, output) {
-			if (!pipe_output_combo_valid(&data->display, pipe, output))
+		for_each_crtc_with_single_output(&data->display, crtc, output) {
+			if (!pipe_output_combo_valid(&data->display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				pageflip_test_pipe(data, pipe, output);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				pageflip_test_pipe(data,
+						   crtc,
+						   output);
 		}
 	}
 
 	igt_describe("Check for cursor leaks after performing cursor operations");
 	igt_subtest_with_dynamic("cursor-fb-leak") {
-		for_each_pipe_with_single_output(&data->display, pipe, output) {
-			if (!pipe_output_combo_valid(&data->display, pipe, output))
+		for_each_crtc_with_single_output(&data->display, crtc, output) {
+			if (!pipe_output_combo_valid(&data->display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				cursor_leak_test_pipe(data, pipe, output);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				cursor_leak_test_pipe(data,
+						      crtc,
+						      output);
 		}
 	}
 
 	igt_describe("Check if pageflip succeeds in windowed setting");
 	igt_subtest_with_dynamic("universal-plane-pageflip-windowed") {
 		igt_require(is_intel_device(data->drm_fd) && data->display_ver >= 9);
-		for_each_pipe_with_single_output(&data->display, pipe, output) {
-			if (!pipe_output_combo_valid(&data->display, pipe, output))
+		for_each_crtc_with_single_output(&data->display, crtc, output) {
+			if (!pipe_output_combo_valid(&data->display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				pageflip_win_test_pipe(data, pipe, output);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				pageflip_win_test_pipe(data,
+						       crtc,
+						       output);
 		}
 	}
 }

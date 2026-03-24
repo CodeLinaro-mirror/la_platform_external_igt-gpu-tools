@@ -66,7 +66,7 @@ typedef struct {
 	igt_display_t display;
 	uint32_t devid;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	struct igt_fb fb_primary;
 	struct igt_fb fb_plane[2];
 	struct {
@@ -273,7 +273,7 @@ test_planes_on_pipe(data_t *data, uint64_t modifier)
 	igt_plane_t *plane;
 	unsigned tested = 0;
 
-	for_each_plane_on_pipe(&data->display, data->pipe, plane)
+	for_each_plane_on_pipe(&data->display, data->crtc->pipe, plane)
 		tested += test_planes_on_pipe_with_output(data, plane, modifier);
 
 	igt_assert(tested > 0);
@@ -283,33 +283,36 @@ static void test_cleanup(data_t *data)
 {
 	igt_pipe_crc_free(data->pipe_crc);
 
-	igt_output_set_pipe(data->output, PIPE_NONE);
+	igt_output_set_crtc(data->output, NULL);
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 }
 
 static void run_test(data_t *data, uint64_t modifier)
 {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 
 	if(!igt_display_has_format_mod(&data->display, DRM_FORMAT_XRGB8888, modifier))
 		return;
 
-	for_each_pipe(&data->display, pipe) {
-		for_each_valid_output_on_pipe(&data->display, pipe, output) {
-			data->pipe = pipe;
+	for_each_crtc(&data->display, crtc) {
+		for_each_valid_output_on_pipe(&data->display, crtc->pipe,
+					      output) {
+			data->crtc = crtc;
 			data->output = output;
 
 			igt_display_reset(&data->display);
-			igt_output_set_pipe(data->output, data->pipe);
+			igt_output_set_crtc(data->output,
+					    data->crtc);
 
 			if (!intel_pipe_output_combo_valid(&data->display))
 				continue;
 
-			data->pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe,
+			data->pipe_crc = igt_crtc_crc_new(data->crtc,
 							  IGT_PIPE_CRC_SOURCE_AUTO);
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), data->output->name)
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      data->output->name)
 				test_planes_on_pipe(data, modifier);
 
 			test_cleanup(data);

@@ -146,7 +146,7 @@ typedef struct {
 	struct igt_fb primary_fb[MAXCURSORBUFFER];
 	struct igt_fb fb;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	int left, right, top, bottom;
 	int screenw, screenh;
 	int refresh;
@@ -214,8 +214,7 @@ static void cursor_disable(data_t *data)
 	igt_display_commit(&data->display);
 
 	/* do this wait here so it will not need to be added everywhere */
-	igt_wait_for_vblank_count(data->drm_fd,
-				  data->display.pipes[data->pipe].crtc_offset,
+	igt_wait_for_vblank_count(data->crtc,
 				  data->vblank_wait_count);
 }
 
@@ -241,7 +240,7 @@ static bool chv_cursor_broken(data_t *data, int x)
 	if (x >= 0)
 		return false;
 
-	return IS_CHERRYVIEW(devid) && data->pipe == PIPE_C;
+	return IS_CHERRYVIEW(devid) && data->crtc->pipe == PIPE_C;
 }
 
 static bool cursor_visible(data_t *data, int x, int y)
@@ -300,8 +299,7 @@ static void do_single_test(data_t *data, int x, int y, bool hw_test,
 		igt_display_commit(display);
 
 		/* Extra vblank wait is because nonblocking cursor ioctl */
-		igt_wait_for_vblank_count(data->drm_fd,
-					  display->pipes[data->pipe].crtc_offset,
+		igt_wait_for_vblank_count(data->crtc,
 					  data->vblank_wait_count);
 
 		igt_pipe_crc_get_current(data->drm_fd, pipe_crc, hwcrc);
@@ -350,9 +348,8 @@ static void do_single_test(data_t *data, int x, int y, bool hw_test,
 		 * synchronized to the same frame on AMD HW
 		 */
 		if (is_amdgpu_device(data->drm_fd))
-			igt_wait_for_vblank_count(data->drm_fd,
-				display->pipes[data->pipe].crtc_offset,
-				data->vblank_wait_count);
+			igt_wait_for_vblank_count(data->crtc,
+						  data->vblank_wait_count);
 
 		igt_pipe_crc_get_current(data->drm_fd, pipe_crc, &crc);
 		igt_assert_crc_equal(&crc, hwcrc);
@@ -562,7 +559,7 @@ static void cleanup_crtc(data_t *data)
 	cairo_surface_destroy(data->surface);
 	data->surface = NULL;
 
-	igt_output_set_pipe(data->output, PIPE_NONE);
+	igt_output_set_crtc(data->output, NULL);
 	igt_plane_set_fb(data->primary, NULL);
 	igt_display_commit(display);
 
@@ -581,7 +578,8 @@ static void prepare_crtc(data_t *data, int cursor_w, int cursor_h)
 	igt_display_reset(display);
 
 	/* select the pipe we want to use */
-	igt_output_set_pipe(output, data->pipe);
+	igt_output_set_crtc(output,
+			    data->crtc);
 
 	/* create and set the primary plane fbs */
 	mode = igt_output_get_mode(output);
@@ -607,7 +605,7 @@ static void prepare_crtc(data_t *data, int cursor_w, int cursor_h)
 	/* create the pipe_crc object for this pipe */
 	if (data->pipe_crc)
 		igt_pipe_crc_free(data->pipe_crc);
-	data->pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe,
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
 	/* x/y position where the cursor is still fully visible */
@@ -735,8 +733,7 @@ static void timed_cursor_changes(data_t *data, void (changefunc)(data_t *, enum 
 	igt_display_commit(&data->display);
 
 	/* Extra vblank wait is because nonblocking cursor ioctl */
-	igt_wait_for_vblank_count(data->drm_fd,
-				  data->display.pipes[data->pipe].crtc_offset,
+	igt_wait_for_vblank_count(data->crtc,
 				  data->vblank_wait_count);
 
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, &crc1);
@@ -784,7 +781,8 @@ static bool cursor_size_supported(data_t *data, int w, int h)
 		    h <= data->cursor_max_h);
 
 	igt_display_reset(display);
-	igt_output_set_pipe(output, data->pipe);
+	igt_output_set_crtc(output,
+			    data->crtc);
 
 	mode = igt_output_get_mode(output);
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
@@ -811,7 +809,7 @@ static bool cursor_size_supported(data_t *data, int w, int h)
 	igt_plane_set_fb(cursor, NULL);
 
 	igt_remove_fb(data->drm_fd, &primary_fb);
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 
 	return ret == 0;
 }
@@ -888,25 +886,26 @@ static bool valid_pipe_output_combo(data_t *data)
 	igt_display_t *display = &data->display;
 
 	igt_display_reset(display);
-	igt_output_set_pipe(data->output, data->pipe);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	if (intel_pipe_output_combo_valid(display))
 		ret = true;
 
-	igt_output_set_pipe(data->output, PIPE_NONE);
+	igt_output_set_crtc(data->output, NULL);
 
 	return ret;
 }
 
-static bool execution_constraint(enum pipe pipe)
+static bool execution_constraint(igt_crtc_t *crtc)
 {
 	if (!extended &&
-	    pipe != active_pipes[0] &&
-	    pipe != active_pipes[last_pipe])
+	    crtc->pipe != active_pipes[0] &&
+	    crtc->pipe != active_pipes[last_pipe])
 		return true;
 
 	if (!extended && igt_run_in_simulation() &&
-	    pipe != active_pipes[0])
+	    crtc->pipe != active_pipes[0])
 		return true;
 
 	return false;
@@ -960,7 +959,7 @@ static void test_size_hints(data_t *data)
 
 static void run_size_tests(data_t *data, int w, int h)
 {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	struct {
 		const char *name;
 		void (*testfunc)(data_t *);
@@ -1007,11 +1006,12 @@ static void run_size_tests(data_t *data, int w, int h)
 				}
 			}
 
-			for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-				if (execution_constraint(pipe))
+			for_each_crtc_with_single_output(&data->display, crtc,
+							 data->output) {
+				if (execution_constraint(crtc))
 					continue;
 
-				data->pipe = pipe;
+				data->crtc = crtc;
 
 				if (!valid_pipe_output_combo(data))
 					continue;
@@ -1022,7 +1022,8 @@ static void run_size_tests(data_t *data, int w, int h)
 				}
 
 				igt_dynamic_f("pipe-%s-%s",
-					      kmstest_pipe_name(pipe), igt_output_name(data->output))
+					      igt_crtc_name(crtc),
+					      igt_output_name(data->output))
 					run_test(data, size_tests[i].testfunc, w, h);
 			}
 		}
@@ -1034,7 +1035,7 @@ static void run_size_tests(data_t *data, int w, int h)
 
 static void run_tests_on_pipe(data_t *data)
 {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	int cursor_size;
 
 	igt_fixture() {
@@ -1046,17 +1047,18 @@ static void run_tests_on_pipe(data_t *data)
 		     "flight to smaller ones to see that the size is applied "
 		     "correctly.");
 	igt_subtest_with_dynamic("cursor-size-change") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-				      kmstest_pipe_name(pipe),
+				      igt_crtc_name(crtc),
 				      data->output->name)
 				run_test(data, test_cursor_size,
 					 data->cursor_max_w, data->cursor_max_h);
@@ -1066,17 +1068,18 @@ static void run_tests_on_pipe(data_t *data)
 	igt_describe("Validates the composition of a fully opaque cursor "
 		     "plane, i.e., alpha channel equal to 1.0.");
 	igt_subtest_with_dynamic("cursor-alpha-opaque") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-				      kmstest_pipe_name(pipe),
+				      igt_crtc_name(crtc),
 				      data->output->name)
 				run_test(data, test_cursor_opaque,
 					 data->cursor_max_w, data->cursor_max_h);
@@ -1086,17 +1089,18 @@ static void run_tests_on_pipe(data_t *data)
 	igt_describe("Validates the composition of a fully transparent cursor "
 		     "plane, i.e., alpha channel equal to 0.0.");
 	igt_subtest_with_dynamic("cursor-alpha-transparent") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-				      kmstest_pipe_name(pipe),
+				      igt_crtc_name(crtc),
 				      data->output->name)
 				run_test(data, test_cursor_transparent,
 					 data->cursor_max_w, data->cursor_max_h);
@@ -1115,17 +1119,18 @@ static void run_tests_on_pipe(data_t *data)
 
 	igt_describe("Validate cursor updates don't cause tearing with framebuffer changes");
 	igt_subtest_with_dynamic("cursor-tearing-framebuffer-change") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-					  kmstest_pipe_name(pipe),
+					  igt_crtc_name(crtc),
 					  data->output->name)
 				run_test(data, test_crc_cursors,
 					  data->cursor_max_w, data->cursor_max_h);
@@ -1134,17 +1139,18 @@ static void run_tests_on_pipe(data_t *data)
 
 	igt_describe("Validate cursor updates don't cause tearing with position changes");
 	igt_subtest_with_dynamic("cursor-tearing-position-change") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-					  kmstest_pipe_name(pipe),
+					  igt_crtc_name(crtc),
 					  data->output->name)
 				run_test(data, test_crc_pos_cursors,
 					  data->cursor_max_w, data->cursor_max_h);
@@ -1160,18 +1166,19 @@ static void run_tests_on_pipe(data_t *data)
 
 	igt_describe("Check random placement of a cursor with DPMS.");
 	igt_subtest_with_dynamic("cursor-dpms") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 			data->flags = TEST_DPMS;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-				      kmstest_pipe_name(pipe),
+				      igt_crtc_name(crtc),
 				      data->output->name)
 				run_test(data, test_crc_random,
 					 data->cursor_max_w, data->cursor_max_h);
@@ -1181,18 +1188,19 @@ static void run_tests_on_pipe(data_t *data)
 
 	igt_describe("Check random placement of a cursor with suspend.");
 	igt_subtest_with_dynamic("cursor-suspend") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 			data->flags = TEST_SUSPEND;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-				      kmstest_pipe_name(pipe),
+				      igt_crtc_name(crtc),
 				      data->output->name)
 				run_test(data, test_crc_random,
 					 data->cursor_max_w, data->cursor_max_h);
@@ -1205,17 +1213,18 @@ static void run_tests_on_pipe(data_t *data)
 
 	igt_describe("Check that sizes declared in SIZE_HINTS are accepted.");
 	igt_subtest_with_dynamic("cursor-size-hints") {
-		for_each_pipe_with_single_output(&data->display, pipe, data->output) {
-			if (execution_constraint(pipe))
+		for_each_crtc_with_single_output(&data->display, crtc,
+						 data->output) {
+			if (execution_constraint(crtc))
 				continue;
 
-			data->pipe = pipe;
+			data->crtc = crtc;
 
 			if (!valid_pipe_output_combo(data))
 				continue;
 
 			igt_dynamic_f("pipe-%s-%s",
-				      kmstest_pipe_name(pipe),
+				      igt_crtc_name(crtc),
 				      data->output->name)
 				run_test(data, test_size_hints,
 					 data->cursor_max_w, data->cursor_max_h);
@@ -1267,7 +1276,7 @@ int igt_main_args("e", NULL, help_str, opt_handler, NULL)
 	int ret;
 
 	igt_fixture() {
-		enum pipe pipe;
+		igt_crtc_t *crtc;
 
 		last_pipe = 0;
 
@@ -1276,8 +1285,8 @@ int igt_main_args("e", NULL, help_str, opt_handler, NULL)
 		igt_display_require(&data.display, data.drm_fd);
 		igt_display_require_output(&data.display);
 		/* Get active pipes. */
-		for_each_pipe(&data.display, pipe)
-			active_pipes[last_pipe++] = pipe;
+		for_each_crtc(&data.display, crtc)
+			active_pipes[last_pipe++] = crtc->pipe;
 		last_pipe--;
 
 		ret = drmGetCap(data.drm_fd, DRM_CAP_CURSOR_WIDTH, &cursor_width);

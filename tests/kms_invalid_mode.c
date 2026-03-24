@@ -64,7 +64,7 @@ typedef struct _data data_t;
 
 struct _data {
 	int drm_fd;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_display_t display;
 	igt_output_t *output;
 	drmModeResPtr res;
@@ -277,7 +277,7 @@ test_output(data_t *data)
 
 	kmstest_unset_all_crtcs(data->drm_fd, data->res);
 
-	crtc_id = data->display.pipes[data->pipe].crtc_id;
+	crtc_id = data->crtc->crtc_id;
 
 	ret = drmModeSetCrtc(data->drm_fd, crtc_id,
 			     fb.fb_id, 0, 0,
@@ -337,7 +337,7 @@ static data_t data;
 int igt_main()
 {
 
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 
 	igt_fixture() {
@@ -356,16 +356,20 @@ int igt_main()
 	igt_describe("Make sure all modesets are rejected when the requested mode is invalid");
 	for (int i = 0; i < ARRAY_SIZE(subtests); i++) {
 		igt_subtest_with_dynamic(subtests[i].name) {
-			for_each_pipe_with_valid_output(&data.display, pipe, output) {
+			for_each_crtc_with_valid_output(&data.display, crtc,
+							output) {
 				igt_display_reset(&data.display);
 
-				igt_output_set_pipe(output, pipe);
+				igt_output_set_crtc(output,
+						    crtc);
 				if (!intel_pipe_output_combo_valid(&data.display))
 					continue;
 
-				igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output)) {
+				igt_dynamic_f("pipe-%s-%s",
+					      igt_crtc_name(crtc),
+					      igt_output_name(output)) {
 					data.output = output;
-					data.pipe = pipe;
+					data.crtc = crtc;
 					data.adjust_mode = subtests[i].adjust_mode;
 					test_output(&data);
 				}

@@ -151,7 +151,7 @@ typedef struct {
 	struct igt_fb fb;
 	igt_output_t *output;
 	igt_plane_t *primary;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 } gpu_process_t;
 
 static void cleanup_crtc(gpu_process_t *gpu)
@@ -161,7 +161,7 @@ static void cleanup_crtc(gpu_process_t *gpu)
 
 	igt_plane_set_fb(gpu->primary, NULL);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit(display);
 
 	igt_remove_fb(gpu->drm_fd, &gpu->fb);
@@ -174,7 +174,8 @@ static void prepare_crtc(gpu_process_t *gpu)
 	drmModeModeInfo *mode;
 
 	/* select the pipe we want to use */
-	igt_output_set_pipe(output, gpu->pipe);
+	igt_output_set_crtc(output,
+			    gpu->crtc);
 
 	mode = igt_output_get_mode(output);
 
@@ -200,13 +201,13 @@ static void run_test(gpu_process_t *gpu)
 {
 	igt_display_t *display = &gpu->display;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
-	for_each_pipe_with_valid_output(display, pipe, output) {
+	for_each_crtc_with_valid_output(display, crtc, output) {
 		int prime_fd;
 
 		gpu->output = output;
-		gpu->pipe = pipe;
+		gpu->crtc = crtc;
 
 		prepare_crtc(gpu);
 
