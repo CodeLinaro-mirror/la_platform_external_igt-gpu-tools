@@ -411,6 +411,8 @@
  *
  * @rgb101010:      FORMAT_RGB101010
  * @rgb565:         FORMAT_RGB565
+ * @argb161616f:    FORMAT_ARGB161616F
+ * @abgr161616f:    FORMAT_ABGR161616F
  *
  * arg[2]:
  *
@@ -444,6 +446,8 @@
  *
  * @rgb101010:      FORMAT_RGB101010
  * @rgb565:         FORMAT_RGB565
+ * @argb161616f:    FORMAT_ARGB161616F
+ * @abgr161616f:    FORMAT_ABGR161616F
  *
  * arg[2]:
  *
@@ -865,6 +869,8 @@ struct test_mode {
 		FORMAT_RGB888 = 0,
 		FORMAT_RGB565,
 		FORMAT_RGB101010,
+		FORMAT_ARGB161616F,
+		FORMAT_ABGR161616F,
 		FORMAT_COUNT,
 		FORMAT_DEFAULT = FORMAT_RGB888,
 	} format;
@@ -909,7 +915,7 @@ struct rect {
 	int y;
 	int w;
 	int h;
-	uint32_t color;
+	uint64_t color;
 };
 
 struct {
@@ -1014,7 +1020,7 @@ struct {
 };
 
 struct modeset_params {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 	drmModeModeInfo mode;
 
@@ -1098,7 +1104,7 @@ static drmModeModeInfo *connector_get_mode(igt_output_t *output)
 }
 
 static void init_mode_params(struct modeset_params *params,
-			     igt_output_t *output, enum pipe pipe)
+			     igt_output_t *output, igt_crtc_t *crtc)
 {
 	int i;
 	drmModeModeInfo *mode;
@@ -1106,25 +1112,28 @@ static void init_mode_params(struct modeset_params *params,
 	igt_output_override_mode(output, NULL);
 	mode = connector_get_mode(output);
 
-	params->pipe = pipe;
+	params->crtc = crtc;
 	params->output = output;
 	params->mode = *mode;
 
-	params->primary.plane = igt_pipe_get_plane_type(&drm.display.pipes[pipe], DRM_PLANE_TYPE_PRIMARY);
+	params->primary.plane = igt_crtc_get_plane_type(crtc,
+							DRM_PLANE_TYPE_PRIMARY);
 	params->primary.fb = NULL;
 	params->primary.x = 0;
 	params->primary.y = 0;
 	params->primary.w = mode->hdisplay;
 	params->primary.h = mode->vdisplay;
 
-	params->cursor.plane = igt_pipe_get_plane_type(&drm.display.pipes[pipe], DRM_PLANE_TYPE_CURSOR);
+	params->cursor.plane = igt_crtc_get_plane_type(crtc,
+						       DRM_PLANE_TYPE_CURSOR);
 	params->cursor.fb = NULL;
 	params->cursor.x = 0;
 	params->cursor.y = 0;
 	params->cursor.w = 64;
 	params->cursor.h = 64;
 
-	params->sprite.plane = igt_pipe_get_plane_type(&drm.display.pipes[pipe], DRM_PLANE_TYPE_OVERLAY);
+	params->sprite.plane = igt_crtc_get_plane_type(crtc,
+						       DRM_PLANE_TYPE_OVERLAY);
 	igt_require(params->sprite.plane);
 	params->sprite.fb = NULL;
 	params->sprite.x = 0;
@@ -1149,24 +1158,25 @@ static void init_mode_params(struct modeset_params *params,
 
 static bool find_connector(bool edp_only, bool pipe_a,
 			   igt_output_t *forbidden_output,
-			   enum pipe forbidden_pipe,
+			   igt_crtc_t *forbidden_crtc,
 			   igt_output_t **ret_output,
-			   enum pipe *ret_pipe)
+			   igt_crtc_t **ret_crtc)
 {
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
-	for_each_pipe_with_valid_output(&drm.display, pipe, output) {
+	for_each_crtc_with_valid_output(&drm.display, crtc, output) {
 		drmModeConnectorPtr c = output->config.connector;
 
 		if (edp_only && c->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 
-		if (pipe_a && pipe != PIPE_A)
+		if (pipe_a && crtc->pipe != PIPE_A)
 			continue;
 
-		if (output == forbidden_output || pipe == forbidden_pipe) {
-			igt_output_set_pipe(output, pipe);
+		if (output == forbidden_output || crtc == forbidden_crtc) {
+			igt_output_set_crtc(output,
+					    crtc);
 			igt_output_override_mode(output, connector_get_mode(output));
 
 			continue;
@@ -1175,11 +1185,12 @@ static bool find_connector(bool edp_only, bool pipe_a,
 		if (c->connector_type == DRM_MODE_CONNECTOR_eDP && opt.no_edp)
 			continue;
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output,
+				    crtc);
 		igt_output_override_mode(output, connector_get_mode(output));
 		if (intel_pipe_output_combo_valid(&drm.display)) {
 			*ret_output = output;
-			*ret_pipe = pipe;
+			*ret_crtc = crtc;
 			return true;
 		}
 	}
@@ -1190,7 +1201,7 @@ static bool find_connector(bool edp_only, bool pipe_a,
 static bool init_modeset_cached_params(void)
 {
 	igt_output_t *prim_output = NULL, *scnd_output = NULL;
-	enum pipe prim_pipe, scnd_pipe;
+	igt_crtc_t *prim_crtc, *scnd_crtc;
 
 	/*
 	 * We have this problem where PSR is only present on eDP monitors and
@@ -1200,29 +1211,29 @@ static bool init_modeset_cached_params(void)
 	 * TODO: refactor the code in a way that allows us to have different
 	 * sets of prim/scnd structs for different features.
 	 */
-	find_connector(true, true, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+	find_connector(true, true, NULL, NULL, &prim_output, &prim_crtc);
 	if (!prim_output)
-		find_connector(true, false, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+		find_connector(true, false, NULL, NULL, &prim_output, &prim_crtc);
 	if (!prim_output)
-		find_connector(false, true, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+		find_connector(false, true, NULL, NULL, &prim_output, &prim_crtc);
 	if (!prim_output)
-		find_connector(false, false, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+		find_connector(false, false, NULL, NULL, &prim_output, &prim_crtc);
 
 	if (!prim_output)
 		return false;
 
-	find_connector(false, false, prim_output, prim_pipe,
-		       &scnd_output, &scnd_pipe);
+	find_connector(false, false, prim_output, prim_crtc,
+		       &scnd_output, &scnd_crtc);
 
-	init_mode_params(&prim_mode_params, prim_output, prim_pipe);
+	init_mode_params(&prim_mode_params, prim_output, prim_crtc);
 
 	if (!scnd_output) {
-		scnd_mode_params.pipe = PIPE_NONE;
+		scnd_mode_params.crtc = NULL;
 		scnd_mode_params.output = NULL;
 		return true;
 	}
 
-	init_mode_params(&scnd_mode_params, scnd_output, scnd_pipe);
+	init_mode_params(&scnd_mode_params, scnd_output, scnd_crtc);
 	return true;
 }
 
@@ -1272,6 +1283,22 @@ static void create_fb(enum pixel_format pformat, int width, int height,
 		else
 			format = DRM_FORMAT_XRGB8888;
 		break;
+	case FORMAT_ARGB161616F:
+		if (plane == PLANE_PRI)
+			format = DRM_FORMAT_ARGB16161616F;
+		else if (plane == PLANE_CUR)
+			format = DRM_FORMAT_ARGB8888;
+		else
+			format = DRM_FORMAT_ARGB16161616F;
+		break;
+	case FORMAT_ABGR161616F:
+		if (plane == PLANE_PRI)
+			format = DRM_FORMAT_ABGR16161616F;
+		else if (plane == PLANE_CUR)
+			format = DRM_FORMAT_ARGB8888;
+		else
+			format = DRM_FORMAT_ABGR16161616F;
+		break;
 	default:
 		igt_assert(false);
 	}
@@ -1283,9 +1310,9 @@ static void create_fb(enum pixel_format pformat, int width, int height,
 	igt_create_fb(drm.fd, width, height, format, modifier, fb);
 }
 
-static uint32_t pick_color(struct igt_fb *fb, enum color ecolor)
+static uint64_t pick_color(struct igt_fb *fb, enum color ecolor)
 {
-	uint32_t color, r, g, b, b2, a;
+	uint64_t color, r, g, b, b2, a;
 	bool alpha = false;
 
 	switch (fb->drm_format) {
@@ -1313,6 +1340,22 @@ static uint32_t pick_color(struct igt_fb *fb, enum color ecolor)
 		g = 0x3FF << 10;
 		b = 0x3FF;
 		b2 = 0x200;
+		break;
+	case DRM_FORMAT_ARGB16161616F:
+		alpha = true;
+		a = 0x3C00ULL << 48;
+		r = 0x3C00ULL << 32;
+		g = 0x3C00ULL << 16;
+		b = 0x3C00ULL;
+		b2 = 0x3800ULL;
+		break;
+	case DRM_FORMAT_ABGR16161616F:
+		alpha = true;
+		a = 0x3C00ULL << 48;
+		b = 0x3C00ULL << 32;
+		g = 0x3C00ULL << 16;
+		r = 0x3C00ULL;
+		b2 = 0x3800ULL;
 		break;
 	default:
 		igt_assert(false);
@@ -1477,7 +1520,7 @@ static void __set_prim_plane_for_params(struct modeset_params *params)
 static void __set_mode_for_params(struct modeset_params *params)
 {
 	igt_output_override_mode(params->output, &params->mode);
-	igt_output_set_pipe(params->output, params->pipe);
+	igt_output_set_crtc(params->output, params->crtc);
 
 	__set_prim_plane_for_params(params);
 }
@@ -1493,8 +1536,8 @@ static void __debugfs_read_crtc(const char *param, char *buf, int len)
 	int dir;
 	enum pipe pipe;
 
-	pipe = prim_mode_params.pipe;
-	dir = igt_debugfs_pipe_dir(drm.fd, pipe, O_DIRECTORY);
+	pipe = prim_mode_params.crtc->pipe;
+	dir = igt_debugfs_crtc_dir(drm.fd, pipe, O_DIRECTORY);
 	igt_require_fd(dir);
 	igt_debugfs_simple_read(dir, param, buf, len);
 	close(dir);
@@ -1642,12 +1685,12 @@ static bool fbc_psr_not_possible(void)
 	return strstr(buf, "FBC disabled: PSR1 enabled (Wa_14016291713)");
 }
 
-static bool fbc_enable_per_plane(int plane_index, enum pipe pipe)
+static bool fbc_enable_per_plane(int plane_index, igt_crtc_t *crtc)
 {
 	char buf[PATH_MAX];
 	char buf_plane[128];
 
-	sprintf(buf_plane, "%d%s", plane_index, kmstest_pipe_name(pipe));
+	sprintf(buf_plane, "%d%s", plane_index, igt_crtc_name(crtc));
 
 	debugfs_read_crtc("i915_fbc_status", buf);
 	return strstr(strstr(buf, "*"), buf_plane);
@@ -1832,7 +1875,7 @@ static void fill_fb_region(struct fb_region *region,
 			   enum igt_draw_method method,
 			   enum color ecolor)
 {
-	uint32_t color = pick_color(region->fb, ecolor);
+	uint64_t color = pick_color(region->fb, ecolor);
 
 	igt_draw_rect_fb(drm.fd, drm.bops, 0, region->fb, method,
 			 region->x, region->y, region->w, region->h,
@@ -1862,7 +1905,7 @@ static bool disable_features(const struct test_mode *t)
 		return false;
 
 	intel_fbc_disable(drm.fd);
-	intel_drrs_disable(drm.fd, prim_mode_params.pipe);
+	intel_drrs_disable(drm.fd, prim_mode_params.crtc->pipe);
 
 	return psr.can_test ? psr_disable(drm.fd, drm.debugfs, NULL) : false;
 }
@@ -1936,13 +1979,13 @@ static void init_blue_crc(enum pixel_format format, enum tiling_type tiling)
 
 	fill_fb(&blue, COLOR_PRIM_BG);
 
-	igt_output_set_pipe(prim_mode_params.output, prim_mode_params.pipe);
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
 	igt_output_override_mode(prim_mode_params.output, &prim_mode_params.mode);
 	igt_plane_set_fb(prim_mode_params.primary.plane, &blue);
 	igt_display_commit(&drm.display);
 
 	if (!pipe_crc) {
-		pipe_crc = igt_pipe_crc_new(drm.fd, prim_mode_params.pipe,
+		pipe_crc = igt_crtc_crc_new(prim_mode_params.crtc,
 					    IGT_PIPE_CRC_SOURCE_AUTO);
 		igt_assert(pipe_crc);
 	}
@@ -1991,7 +2034,7 @@ static void init_crcs(enum pixel_format format, enum tiling_type tiling,
 					 IGT_DRAW_PWRITE : IGT_DRAW_BLT, r);
 	}
 
-	igt_output_set_pipe(prim_mode_params.output, prim_mode_params.pipe);
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
 	igt_output_override_mode(prim_mode_params.output, &prim_mode_params.mode);
 	for (r = 0; r < pattern->n_rects; r++) {
 		igt_plane_set_fb(prim_mode_params.primary.plane, &tmp_fbs[r]);
@@ -2109,7 +2152,7 @@ static void teardown_crcs(void)
 
 static void setup_fbc(void)
 {
-	if (!intel_fbc_supported_on_chipset(drm.fd, prim_mode_params.pipe)) {
+	if (!intel_fbc_supported_on_chipset(drm.fd, prim_mode_params.crtc->pipe)) {
 		igt_info("Can't test FBC: not supported on this chipset\n");
 		return;
 	}
@@ -2149,7 +2192,7 @@ static void setup_drrs(void)
 		return;
 	}
 
-	if (!intel_is_drrs_supported(drm.fd, prim_mode_params.pipe)) {
+	if (!intel_is_drrs_supported(drm.fd, prim_mode_params.crtc->pipe)) {
 		igt_info("Can't test DRRS: Not supported.\n");
 		return;
 	}
@@ -2306,7 +2349,7 @@ static void do_status_assertions(int flags)
 			igt_assert_f(false, "DRRS LOW\n");
 		}
 	} else if (flags & ASSERT_DRRS_INACTIVE) {
-		if (!intel_is_drrs_inactive(drm.fd, prim_mode_params.pipe)) {
+		if (!intel_is_drrs_inactive(drm.fd, prim_mode_params.crtc->pipe)) {
 			drrs_print_status();
 			igt_assert_f(false, "DRRS INACTIVE\n");
 		}
@@ -2317,9 +2360,9 @@ static void do_status_assertions(int flags)
 		igt_require(!fbc_stride_not_supported());
 		igt_require(!fbc_mode_too_large());
 		igt_require(!fbc_psr_not_possible());
-		if (!intel_fbc_wait_until_enabled(drm.fd, prim_mode_params.pipe)) {
+		if (!intel_fbc_wait_until_enabled(drm.fd, prim_mode_params.crtc->pipe)) {
 			igt_assert_f(intel_fbc_is_enabled(drm.fd,
-						    prim_mode_params.pipe,
+						    prim_mode_params.crtc->pipe,
 						    IGT_LOG_WARN),
 				     "FBC disabled\n");
 		}
@@ -2328,7 +2371,7 @@ static void do_status_assertions(int flags)
 			igt_assert(fbc_wait_for_compression());
 	} else if (flags & ASSERT_FBC_DISABLED) {
 		igt_assert(!intel_fbc_wait_until_enabled(drm.fd,
-						   prim_mode_params.pipe));
+						   prim_mode_params.crtc->pipe));
 	}
 
 	if (flags & ASSERT_PSR_ENABLED) {
@@ -2397,8 +2440,8 @@ static void update_modeset_cached_params(enum igt_draw_method method)
 {
 	bool found = false;
 
-	igt_output_set_pipe(prim_mode_params.output, prim_mode_params.pipe);
-	igt_output_set_pipe(scnd_mode_params.output, scnd_mode_params.pipe);
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
+	igt_output_set_crtc(scnd_mode_params.output, scnd_mode_params.crtc);
 
 	found = igt_override_all_active_output_modes_to_fit_bw(&drm.display);
 	igt_require_f(found, "No valid mode combo found.\n");
@@ -2464,9 +2507,9 @@ static void set_region_for_test(const struct test_mode *t,
 static void set_plane_for_test_fbc(const struct test_mode *t, igt_plane_t *plane)
 {
 	struct igt_fb fb;
-	uint32_t color;
+	uint64_t color;
 
-	igt_info("Testing fbc on plane %i%s\n", plane->index + 1, kmstest_pipe_name(prim_mode_params.pipe));
+	igt_info("Testing fbc on plane %i%s\n", plane->index + 1, igt_crtc_name(prim_mode_params.crtc));
 
 	create_fb(t->format, prim_mode_params.mode.hdisplay, prim_mode_params.mode.vdisplay, t->tiling, t->plane, &fb);
 	color = pick_color(&fb, COLOR_PRIM_BG);
@@ -2482,7 +2525,7 @@ static void set_plane_for_test_fbc(const struct test_mode *t, igt_plane_t *plane
 
 	fbc_update_last_action();
 	do_assertions(ASSERT_FBC_ENABLED | ASSERT_NO_ACTION_CHANGE);
-	igt_assert_f(fbc_enable_per_plane(plane->index + 1, prim_mode_params.pipe), "FBC disabled\n");
+	igt_assert_f(fbc_enable_per_plane(plane->index + 1, prim_mode_params.crtc), "FBC disabled\n");
 
 	igt_remove_fb(drm.fd, &fb);
 	igt_plane_set_fb(plane, NULL);
@@ -2501,7 +2544,7 @@ static bool enable_features_for_test(const struct test_mode *t)
 	if (t->feature & FEATURE_PSR)
 		ret = psr_enable(drm.fd, drm.debugfs, PSR_MODE_1, NULL);
 	if (t->feature & FEATURE_DRRS)
-		intel_drrs_enable(drm.fd, prim_mode_params.pipe);
+		intel_drrs_enable(drm.fd, prim_mode_params.crtc->pipe);
 
 	return ret;
 }
@@ -2721,11 +2764,11 @@ static void plane_fbc_rte_subtest(const struct test_mode *t)
 	do_assertions(ASSERT_FBC_DISABLED | DONT_ASSERT_CRC);
 
 	igt_output_override_mode(prim_mode_params.output, &prim_mode_params.mode);
-	igt_output_set_pipe(prim_mode_params.output, prim_mode_params.pipe);
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
 
 	wanted_crc = &blue_crcs[t->format].crc;
 
-	for_each_plane_on_pipe(&drm.display, prim_mode_params.pipe, plane) {
+	for_each_plane_on_pipe(&drm.display, prim_mode_params.crtc->pipe, plane) {
 		if (!is_valid_plane(plane))
 			continue;
 
@@ -2939,6 +2982,9 @@ static bool format_is_valid(int feature_flags,
 		return true;
 	case FORMAT_RGB101010:
 		return false;
+	case FORMAT_ARGB161616F:
+	case FORMAT_ABGR161616F:
+		return true;
 	default:
 		igt_assert(false);
 	}
@@ -3112,7 +3158,7 @@ static void page_flip_for_params(struct modeset_params *params,
 
 	switch (type) {
 	case FLIP_PAGEFLIP:
-		rc = drmModePageFlip(drm.fd, drm.display.pipes[params->pipe].crtc_id,
+		rc = drmModePageFlip(drm.fd, params->crtc->crtc_id,
 				     params->primary.fb->fb_id,
 				     DRM_MODE_PAGE_FLIP_EVENT, NULL);
 		igt_assert_eq(rc, 0);
@@ -3724,7 +3770,9 @@ static void stridechange_subtest(const struct test_mode *t)
 	 * Try to set a new stride. with the page flip api. This is allowed
 	 * with the atomic page flip helper, but not with the legacy page flip.
 	 */
-	rc = drmModePageFlip(drm.fd, drm.display.pipes[params->pipe].crtc_id, new_fb->fb_id, 0, NULL);
+	rc = drmModePageFlip(drm.fd,
+			     params->crtc->crtc_id,
+			     new_fb->fb_id, 0, NULL);
 	igt_assert(rc == -EINVAL || rc == 0);
 	do_assertions(rc ? 0 : DONT_ASSERT_FBC_STATUS);
 }
@@ -4007,6 +4055,10 @@ static const char *format_str(enum pixel_format format)
 		return "rgb565";
 	case FORMAT_RGB101010:
 		return "rgb101010";
+	case FORMAT_ARGB161616F:
+		return "argb161616f";
+	case FORMAT_ABGR161616F:
+		return "abgr161616f";
 	default:
 		igt_assert(false);
 	}
@@ -4090,8 +4142,8 @@ struct option long_options[] = {
 int igt_main_args("", long_options, help_str, opt_handler, NULL)
 {
 	struct test_mode t;
-	enum pipe pipe;
 	igt_output_t *output;
+	igt_crtc_t *crtc;
 
 	igt_fixture() {
 		setup_drm();
@@ -4151,7 +4203,7 @@ int igt_main_args("", long_options, help_str, opt_handler, NULL)
 	igt_subtest_group() {
 		igt_subtest_with_dynamic("pipe-fbc-rte") {
 
-			enum pipe default_pipe = prim_mode_params.pipe;
+			igt_crtc_t *default_crtc = prim_mode_params.crtc;
 
 			t.pipes = PIPE_SINGLE;
 			t.feature = FEATURE_FBC;
@@ -4166,25 +4218,25 @@ int igt_main_args("", long_options, help_str, opt_handler, NULL)
 			igt_skip_on_f((IS_BATTLEMAGE(drm.devid) && t.feature == FEATURE_FBC),
 				      "FBC isn't supported on BMG\n");
 
-			for_each_pipe(&drm.display, pipe) {
-				if (pipe == default_pipe) {
-					igt_info("pipe-%s: FBC validated in other subtest\n", kmstest_pipe_name(pipe));
+			for_each_crtc(&drm.display, crtc) {
+				if (crtc == default_crtc) {
+					igt_info("pipe-%s: FBC validated in other subtest\n", igt_crtc_name(crtc));
 					continue;
 				}
 
-				if (!intel_fbc_supported_on_chipset(drm.fd, pipe)) {
-					igt_info("Can't test FBC: not supported on pipe-%s\n", kmstest_pipe_name(pipe));
+				if (!intel_fbc_supported_on_chipset(drm.fd, crtc->pipe)) {
+					igt_info("Can't test FBC: not supported on pipe-%s\n", igt_crtc_name(crtc));
 					continue;
 				}
 
 				pipe_crc = NULL;
 				setup_crcs();
 
-				for_each_valid_output_on_pipe(&drm.display, pipe, output) {
-					init_mode_params(&prim_mode_params, output, pipe);
+				for_each_valid_output_on_pipe(&drm.display, crtc->pipe, output) {
+					init_mode_params(&prim_mode_params, output, crtc);
 					setup_fbc();
 
-					igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe),
+					igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
 						      igt_output_name(output))
 						rte_subtest(&t);
 
@@ -4353,6 +4405,9 @@ int igt_main_args("", long_options, help_str, opt_handler, NULL)
 				      format_str(t.format),
 				      igt_draw_get_method_name(t.method))
 			{
+				if (t.format == FORMAT_ARGB161616F ||
+				    t.format == FORMAT_ABGR161616F)
+					igt_require(drm.display_ver >= 35);
 				igt_require(igt_draw_supports_method(drm.fd, t.method));
 				format_draw_subtest(&t);
 			}

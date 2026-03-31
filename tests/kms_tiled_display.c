@@ -65,7 +65,7 @@ IGT_TEST_DESCRIPTION("Test for genlocked CRTCs with tiled displays");
 typedef struct {
 	igt_output_t *output;
 	igt_tile_info_t tile;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	drmModeConnectorPtr connector;
 	bool got_page_flip;
 } data_connector_t;
@@ -198,7 +198,7 @@ static void test_cleanup(data_t *data)
 	for (count = 0; count < data->num_h_tiles; count++) {
 		if (conns[count].output) {
 			reset_plane(conns[count].output);
-			igt_output_set_pipe(conns[count].output, PIPE_NONE);
+			igt_output_set_crtc(conns[count].output, NULL);
 		}
 	}
 	igt_remove_fb(data->drm_fd, &data->fb_test_pattern);
@@ -215,7 +215,7 @@ static void setup_mode(data_t *data)
 {
 	int count = 0, prev = 0, i = 0;
 	bool pipe_in_use = false, found = false;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	drmModeModeInfo *mode;
 	igt_output_t *output;
 	data_connector_t *conns = data->conns;
@@ -231,13 +231,13 @@ static void setup_mode(data_t *data)
 		output = igt_output_from_connector(&data->display,
 						   conns[count].connector);
 
-		for_each_pipe(&data->display, pipe) {
+		for_each_crtc(&data->display, crtc) {
 			pipe_in_use = false;
 			found = false;
 
 			if (count > 0) {
 				for (prev = count - 1; prev >= 0; prev--) {
-					if (pipe == conns[prev].pipe) {
+					if (crtc->pipe == conns[prev].crtc->pipe) {
 						pipe_in_use = true;
 						break;
 					}
@@ -246,16 +246,16 @@ static void setup_mode(data_t *data)
 					continue;
 			}
 
-			if (igt_pipe_connector_valid(pipe, output)) {
-				conns[count].pipe = pipe;
+			if (igt_pipe_connector_valid(crtc->pipe, output)) {
+				conns[count].crtc = crtc;
 				conns[count].output = output;
 
-				igt_output_set_pipe(conns[count].output,
-						    conns[count].pipe);
+				igt_output_set_crtc(conns[count].output,
+						    conns[count].crtc);
 				break;
 			}
 		}
-		igt_require(conns[count].pipe != PIPE_NONE);
+		igt_require(conns[count].crtc != NULL);
 
 		for (i = 0; i < conns[count].connector->count_modes; i++) {
 			mode = &conns[count].connector->modes[i];
@@ -328,7 +328,7 @@ static data_connector_t *conn_for_crtc(data_t *data, unsigned int crtc_id)
 	for (int i = 0; i < data->num_h_tiles; i++) {
 		data_connector_t *conn = &data->conns[i];
 
-		if (data->display.pipes[conn->pipe].crtc_id == crtc_id)
+		if (conn->crtc->crtc_id == crtc_id)
 			return conn;
 	}
 
@@ -513,7 +513,7 @@ static void override_edid(data_t *data)
 	int num_outputs = 0;
 	int num_tiles = 0;
 
-	igt_require(data->display.n_pipes >= 2);
+	igt_require(igt_display_n_crtcs(&data->display) >= 2);
 
 	for_each_connected_output(&data->display, output) {
 		drmModeModeInfo *mode = igt_output_get_mode(output);
@@ -530,7 +530,7 @@ static void override_edid(data_t *data)
 
 	igt_require(num_outputs >= 2);
 
-	num_tiles = min(num_outputs, data->display.n_pipes);
+	num_tiles = min(num_outputs, igt_display_n_crtcs(&data->display));
 
 	/* disable everything so that we are sure to get a full modeset */
 	igt_display_reset(&data->display);

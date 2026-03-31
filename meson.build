@@ -1,5 +1,5 @@
 project('igt-gpu-tools', 'c',
-	version : '2.2',
+	version : '2.3',
         default_options: [
           'warning_level=2',
           'c_std=gnu11',
@@ -162,6 +162,7 @@ endif
 build_info += 'Valgrind annotations: @0@'.format(valgrind.found())
 
 cairo = dependency('cairo', version : '>1.12.0', required : true)
+libpci = dependency('libpci', required : true)
 libudev = dependency('libudev', required : true)
 glib = dependency('glib-2.0', required : true)
 

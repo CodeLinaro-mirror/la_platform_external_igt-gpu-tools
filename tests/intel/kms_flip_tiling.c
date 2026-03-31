@@ -67,12 +67,12 @@ static void pipe_crc_free(data_t *data)
 	data->pipe_crc = NULL;
 }
 
-static void pipe_crc_new(data_t *data, int pipe)
+static void pipe_crc_new(data_t *data, igt_crtc_t *crtc)
 {
 	if (data->pipe_crc)
 		return;
 
-	data->pipe_crc = igt_pipe_crc_new(data->drm_fd, pipe,
+	data->pipe_crc = igt_crtc_crc_new(crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 	igt_assert(data->pipe_crc);
 	igt_pipe_crc_start(data->pipe_crc);
@@ -107,7 +107,8 @@ static uint64_t pageflip_timeout_us(drmModeModeInfo *mode)
 }
 
 static void
-test_flip_tiling(data_t *data, enum pipe pipe, igt_output_t *output, uint64_t modifier[2])
+test_flip_tiling(data_t *data, igt_crtc_t *crtc, igt_output_t *output,
+		 uint64_t modifier[2])
 {
 	drmModeModeInfo *mode;
 	igt_plane_t *primary;
@@ -138,7 +139,7 @@ test_flip_tiling(data_t *data, enum pipe pipe, igt_output_t *output, uint64_t mo
 	igt_require_f(try_commit(&data->display) == 0,
 		      "commit failed with " IGT_MODIFIER_FMT "\n",
 		      IGT_MODIFIER_ARGS(modifier[1]));
-	pipe_crc_new(data, pipe);
+	pipe_crc_new(data, crtc);
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, &reference_crc);
 
 	/* Commit the first fb. */
@@ -168,7 +169,7 @@ test_flip_tiling(data_t *data, enum pipe pipe, igt_output_t *output, uint64_t mo
 	igt_remove_fb(data->drm_fd, &data->old_fb[1]);
 }
 
-static void test_cleanup(data_t *data, enum pipe pipe, igt_output_t *output)
+static void test_cleanup(data_t *data, igt_output_t *output)
 {
 	igt_plane_t *primary;
 	primary = igt_output_get_plane(output, 0);
@@ -176,7 +177,7 @@ static void test_cleanup(data_t *data, enum pipe pipe, igt_output_t *output)
 	/* Clean up. */
 	igt_plane_set_fb(primary, NULL);
 	pipe_crc_free(data);
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 
 	igt_remove_fb(data->drm_fd, &data->fb[0]);
 	igt_remove_fb(data->drm_fd, &data->fb[1]);
@@ -225,16 +226,17 @@ int igt_main()
 
 	igt_describe("Check pageflip between modifiers");
 	igt_subtest_with_dynamic("flip-change-tiling") {
-		enum pipe pipe;
+		igt_crtc_t *crtc;
 		bool run_in_simulation = igt_run_in_simulation();
 
-		for_each_pipe_with_valid_output(&data.display, pipe, output) {
+		for_each_crtc_with_valid_output(&data.display, crtc, output) {
 			igt_plane_t *plane;
 
 			igt_display_reset(&data.display);
 			pipe_crc_free(&data);
 
-			igt_output_set_pipe(output, pipe);
+			igt_output_set_crtc(output,
+					    crtc);
 			if (!intel_pipe_output_combo_valid(&data.display))
 				continue;
 
@@ -259,17 +261,20 @@ int igt_main()
 						continue;
 
 					igt_dynamic_f("pipe-%s-%s-%s-to-%s",
-						      kmstest_pipe_name(pipe),
+						      igt_crtc_name(crtc),
 						      igt_output_name(output),
 						      igt_fb_modifier_name(modifier[0]),
 						      igt_fb_modifier_name(modifier[1]))
-						test_flip_tiling(&data, pipe, output, modifier);
+						test_flip_tiling(&data,
+								 crtc,
+								 output,
+								 modifier);
 
 					if (data.flipevent_in_queue)
 						handle_lost_event(&data);
 				}
 			}
-			test_cleanup(&data, pipe, output);
+			test_cleanup(&data, output);
 		}
 	}
 

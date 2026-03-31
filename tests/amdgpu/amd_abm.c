@@ -42,10 +42,9 @@ typedef struct data {
 	igt_display_t display;
 	igt_plane_t *primary;
 	igt_output_t *output;
-	igt_pipe_t *pipe;
+	igt_crtc_t *crtc;
 	int drm_fd;
 	drmModeModeInfo *mode;
-	enum pipe pipe_id;
 	int w, h;
 	igt_fb_t ref_fb;
 	igt_fb_t ref_fb2;
@@ -130,12 +129,12 @@ static void test_init(data_t *data)
 		igt_skip("No eDP connector found\n");
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->pipe_id = PIPE_A;
-	data->pipe = &data->display.pipes[data->pipe_id];
+	data->crtc = igt_crtc_for_pipe(&data->display, PIPE_A);
 
 	igt_display_reset(display);
 
-	data->output = igt_get_single_output_for_pipe(display, data->pipe_id);
+	data->output = igt_get_single_output_for_pipe(display,
+						      data->crtc->pipe);
 	igt_require(data->output);
 	igt_info("output %s\n", data->output->name);
 
@@ -144,9 +143,10 @@ static void test_init(data_t *data)
 	kmstest_dump_mode(data->mode);
 
 	data->primary =
-		 igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_PRIMARY);
+		 igt_crtc_get_plane_type(data->crtc, DRM_PLANE_TYPE_PRIMARY);
 
-	igt_output_set_pipe(data->output, data->pipe_id);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	data->w = data->mode->hdisplay;
 	data->h = data->mode->vdisplay;
@@ -169,10 +169,10 @@ static void test_fini(data_t *data)
 {
 	igt_display_t *display = &data->display;
 	igt_output_t *output;
-	enum pipe pipe;
 
 	/* Disable ABM before exit test */
-	for_each_valid_output_on_pipe(&data->display, pipe, output) {
+	for_each_valid_output_on_pipe(&data->display, data->crtc->pipe,
+				      output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 		set_abm_level(data, output, 0);
@@ -266,7 +266,8 @@ static void set_abm_level(data_t *data, igt_output_t *output, int level)
 
 	igt_assert_eq(close(fd), 0);
 
-	igt_output_set_pipe(data->output, data->pipe_id);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 	igt_plane_set_fb(data->primary, &data->ref_fb);
 	igt_display_commit_atomic(&data->display, 0, 0);
 }
@@ -325,9 +326,9 @@ static void backlight_dpms_cycle(data_t *data)
 	int max_brightness;
 	int pwm_1, pwm_2;
 	igt_output_t *output;
-	enum pipe pipe;
 
-	for_each_valid_output_on_pipe(&data->display, pipe, output) {
+	for_each_valid_output_on_pipe(&data->display, data->crtc->pipe,
+				      output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 
@@ -356,10 +357,10 @@ static void backlight_monotonic_basic(data_t *data)
 	int prev_pwm, pwm;
 	int brightness_step;
 	int brightness;
-	enum pipe pipe;
 	igt_output_t *output;
 
-	for_each_valid_output_on_pipe(&data->display, pipe, output) {
+	for_each_valid_output_on_pipe(&data->display, data->crtc->pipe,
+				      output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 		ret = backlight_read_max_brightness(&max_brightness);
@@ -390,10 +391,10 @@ static void backlight_monotonic_abm(data_t *data)
 	int prev_pwm, pwm;
 	int brightness_step;
 	int brightness;
-	enum pipe pipe;
 	igt_output_t *output;
 
-	for_each_valid_output_on_pipe(&data->display, pipe, output) {
+	for_each_valid_output_on_pipe(&data->display, data->crtc->pipe,
+				      output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 		ret = backlight_read_max_brightness(&max_brightness);
@@ -423,10 +424,10 @@ static void abm_enabled(data_t *data)
 	int ret, i;
 	int max_brightness;
 	int pwm, prev_pwm, pwm_without_abm;
-	enum pipe pipe;
 	igt_output_t *output;
 
-	for_each_valid_output_on_pipe(&data->display, pipe, output) {
+	for_each_valid_output_on_pipe(&data->display, data->crtc->pipe,
+				      output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 
@@ -457,10 +458,10 @@ static void abm_gradual(data_t *data)
 	int convergence_delay = 10;
 	int prev_pwm, pwm, curr;
 	int max_brightness;
-	enum pipe pipe;
 	igt_output_t *output;
 
-	for_each_valid_output_on_pipe(&data->display, pipe, output) {
+	for_each_valid_output_on_pipe(&data->display, data->crtc->pipe,
+				      output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 

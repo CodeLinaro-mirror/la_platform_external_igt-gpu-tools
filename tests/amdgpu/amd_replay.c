@@ -21,12 +21,11 @@ struct test_data {
 	igt_display_t display;
 	igt_plane_t *primary;
 	igt_output_t *output;
-	igt_pipe_t *pipe;
+	igt_crtc_t *crtc;
 	drmModeModeInfo *mode;
 	igt_fb_t ref_fb;
 	igt_fb_t ref_fb2;
 	igt_fb_t *flip_fb;
-	enum pipe pipe_id;
 	int fd;
 	int debugfs_fd;
 	int w, h;
@@ -61,12 +60,12 @@ static void test_init(struct test_data *data)
 	igt_display_t *display = &data->display;
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->pipe_id = PIPE_A;
-	data->pipe = &data->display.pipes[data->pipe_id];
+	data->crtc = igt_crtc_for_pipe(&data->display, PIPE_A);
 
 	igt_display_reset(display);
 
-	data->output = igt_get_single_output_for_pipe(display, data->pipe_id);
+	data->output = igt_get_single_output_for_pipe(display,
+						      data->crtc->pipe);
 	igt_require(data->output);
 	igt_info("output %s\n", data->output->name);
 
@@ -75,9 +74,10 @@ static void test_init(struct test_data *data)
 	kmstest_dump_mode(data->mode);
 
 	data->primary =
-		 igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_PRIMARY);
+		 igt_crtc_get_plane_type(data->crtc, DRM_PLANE_TYPE_PRIMARY);
 
-	igt_output_set_pipe(data->output, data->pipe_id);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	data->w = data->mode->hdisplay;
 	data->h = data->mode->vdisplay;

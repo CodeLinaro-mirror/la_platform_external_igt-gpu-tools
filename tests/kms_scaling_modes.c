@@ -54,7 +54,8 @@ typedef struct data {
 	int drm_fd;
 } data_t;
 
-static void test_scaling_mode_on_output(igt_display_t *display, const enum pipe pipe,
+static void test_scaling_mode_on_output(igt_display_t *display,
+					igt_crtc_t *crtc,
 					igt_output_t *output, uint32_t flags)
 {
 	igt_plane_t *primary, *sprite;
@@ -62,7 +63,7 @@ static void test_scaling_mode_on_output(igt_display_t *display, const enum pipe 
 	struct igt_fb red, blue;
 	int ret;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	mode = *igt_output_get_mode(output);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
@@ -110,9 +111,9 @@ static void test_scaling_mode(data_t *data, uint32_t flags)
 {
 	igt_display_t *display = &data->display;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
-	for_each_pipe_with_valid_output(display, pipe, output) {
+	for_each_crtc_with_valid_output(display, crtc, output) {
 		igt_display_reset(display);
 
 		if (!has_scaling_mode(output)) {
@@ -121,12 +122,16 @@ static void test_scaling_mode(data_t *data, uint32_t flags)
 			continue;
 		}
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output,
+				    crtc);
 		if (!intel_pipe_output_combo_valid(display))
 			continue;
 
-		igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-			test_scaling_mode_on_output(display, pipe, output, flags);
+		igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+			      igt_output_name(output))
+			test_scaling_mode_on_output(display,
+						    crtc,
+						    output, flags);
 	}
 }
 

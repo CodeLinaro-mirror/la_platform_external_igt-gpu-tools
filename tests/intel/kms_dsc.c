@@ -79,7 +79,7 @@ typedef struct {
 	igt_output_t *output;
 	int input_bpc;
 	int disp_ver;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	bool limited;
 } data_t;
 
@@ -122,7 +122,7 @@ static void test_cleanup(data_t *data)
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, NULL);
 
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_remove_fb(data->drm_fd, &data->fb_test_pattern);
 }
 
@@ -164,7 +164,7 @@ static void update_display(data_t *data, uint32_t test_type)
 		force_dsc_fractional_bpp_enable(data->drm_fd, data->output);
 	}
 
-	igt_output_set_pipe(output, data->pipe);
+	igt_output_set_crtc(output, data->crtc);
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 
 	igt_skip_on(!igt_plane_has_format_mod(primary, data->plane_format,
@@ -226,7 +226,7 @@ static void update_display(data_t *data, uint32_t test_type)
 	restore_force_dsc_fractional_bpp_en();
 
 	if (test_type & TEST_DSC_BPC) {
-		current_bpc = igt_get_pipe_current_bpc(data->drm_fd, data->pipe);
+		current_bpc = igt_get_pipe_current_bpc(data->drm_fd, data->crtc->pipe);
 		igt_skip_on_f(data->input_bpc != current_bpc,
 			      "Input bpc = %d is not equal to current bpc = %d\n",
 			      data->input_bpc, current_bpc);
@@ -235,7 +235,7 @@ static void update_display(data_t *data, uint32_t test_type)
 	igt_assert_f(enabled,
 		     "Default DSC enable failed on connector: %s pipe: %s\n",
 		     output->name,
-		     kmstest_pipe_name(data->pipe));
+		     igt_crtc_name(data->crtc));
 reset:
 	test_reset(data);
 
@@ -250,7 +250,7 @@ static void test_dsc(data_t *data, uint32_t test_type, int bpc,
 {
 	igt_display_t *display = &data->display;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	char name[3][LEN] = {
 				{0},
 				{0},
@@ -259,15 +259,15 @@ static void test_dsc(data_t *data, uint32_t test_type, int bpc,
 
 	igt_require(check_gen11_bpc_constraint(data->drm_fd, data->input_bpc));
 
-	for_each_pipe_with_valid_output(display, pipe, output) {
+	for_each_crtc_with_valid_output(display, crtc, output) {
 		data->output_format = output_format;
 		data->plane_format = plane_format;
 		data->input_bpc = bpc;
 		data->output = output;
-		data->pipe = pipe;
+		data->crtc = crtc;
 
 		if (!is_dsc_supported_by_sink(data->drm_fd, data->output) ||
-		    !check_gen11_dp_constraint(data->drm_fd, data->output, data->pipe))
+		    !check_gen11_dp_constraint(data->drm_fd, data->output, data->crtc))
 			continue;
 
 		if (igt_get_output_max_bpc(data->drm_fd, output->name) < MIN_DSC_BPC) {
@@ -292,7 +292,7 @@ static void test_dsc(data_t *data, uint32_t test_type, int bpc,
 		if (test_type & TEST_DSC_BPC)
 			snprintf(&name[2][0], LEN, "-%dbpc", data->input_bpc);
 
-		igt_dynamic_f("pipe-%s-%s%s%s%s",  kmstest_pipe_name(data->pipe), data->output->name,
+		igt_dynamic_f("pipe-%s-%s%s%s%s",  igt_crtc_name(data->crtc), data->output->name,
 			      &name[0][0], &name[1][0], &name[2][0])
 			update_display(data, test_type);
 

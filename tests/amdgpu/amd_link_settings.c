@@ -30,8 +30,7 @@ typedef struct
         igt_plane_t *primary;
         igt_output_t *output;
         igt_fb_t fb;
-	igt_pipe_t *pipe;
-        enum pipe pipe_id;
+	igt_crtc_t *crtc;
 	int connector_type;
 	int w, h;
 	int supported_ilr[MAX_SUPPORTED_ILR];
@@ -75,7 +74,7 @@ static void set_all_output_pipe_to_none(data_t *data)
 	igt_output_t *output;
 
 	for_each_connected_output(&data->display, output) {
-		igt_output_set_pipe(output, PIPE_NONE);
+		igt_output_set_crtc(output, NULL);
 	}
 
 	igt_display_commit_atomic(&data->display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
@@ -83,26 +82,25 @@ static void set_all_output_pipe_to_none(data_t *data)
 
 static void test_init(data_t *data, igt_output_t *output)
 {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
 	igt_require(output->config.connector->count_modes >= 1);
 
 	set_all_output_pipe_to_none(data);
 
-	for_each_pipe(&data->display, pipe) {
-		if (igt_pipe_connector_valid(pipe, output)) {
-			data->pipe_id = pipe;
+	for_each_crtc(&data->display, crtc) {
+		if (igt_pipe_connector_valid(crtc->pipe, output)) {
+			data->crtc = crtc;
 			break;
 		}
 	}
 
 	data->connector_type = output->config.connector->connector_type;
 
-	igt_require(data->pipe_id != PIPE_NONE);
+	igt_require(data->crtc != NULL);
 
-	data->pipe = &data->display.pipes[data->pipe_id];
-
-	igt_output_set_pipe(output, data->pipe_id);
+	igt_output_set_crtc(output,
+			    data->crtc);
 
 	data->primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 }

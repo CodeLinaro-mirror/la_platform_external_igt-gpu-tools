@@ -82,23 +82,24 @@
  *              of %arg[1] modifier with max hardware stride length, %arg[2]-bpp,
  *              and %arg[3]-rotation
  *
+ * SUBTEST: %s-max-hw-stride-%dbpp-rotate-%d-hflip
+ * Description: Test maximum hardware supported stride length for given combination
+ *              of %arg[1] modifier with max hardware stride length, %arg[2]-bpp,
+ *              and %arg[3]-rotation with H-flip mode
+ *
  * arg[1]:
  *
  * @4-tiled:            TILE-4 modifier
  * @x-tiled:            TILE-X modifier
  * @y-tiled:            TILE-Y modifier
  * @yf-tiled:           TILE-YF modifier
+ * @linear:             LINEAR modifier
  *
  * arg[2].values:       32, 64
  * arg[3].values:       0, 180
  */
 
 /**
- * SUBTEST: %s-max-hw-stride-%dbpp-rotate-%d-hflip
- * Description: Test maximum hardware supported stride length for given combination
- *              of %arg[1] modifier with max hardware stride length, %arg[2]-bpp,
- *              and %arg[3]-rotation with H-flip mode
- *
  * SUBTEST: %s-max-hw-stride-%dbpp-rotate-%d-%s
  * Description: Test maximum hardware supported stride length for given combination
  *              of %arg[1] modifier with max hardware stride length, %arg[2]-bpp,
@@ -151,7 +152,7 @@ typedef struct {
 	int drm_fd;
 	uint32_t devid;
 	igt_display_t display;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 	igt_plane_t *plane;
 	igt_pipe_crc_t *pipe_crc;
@@ -375,7 +376,7 @@ static void prep_fb(data_t *data)
 
 static void set_c8_lut(data_t *data)
 {
-	igt_pipe_t *pipe = &data->display.pipes[data->pipe];
+	igt_crtc_t *crtc = data->crtc;
 	struct drm_color_lut *lut;
 	int i, lut_size = 256;
 
@@ -388,7 +389,7 @@ static void set_c8_lut(data_t *data)
 		lut[i].blue = ((i & 0x03) >> 0) * 0xffff / 0x3;
 	}
 
-	igt_pipe_obj_replace_prop_blob(pipe, IGT_CRTC_GAMMA_LUT, lut,
+	igt_crtc_replace_prop_blob(crtc, IGT_CRTC_GAMMA_LUT, lut,
 				       lut_size * sizeof(lut[0]));
 
 	free(lut);
@@ -396,9 +397,9 @@ static void set_c8_lut(data_t *data)
 
 static void unset_lut(data_t *data)
 {
-	igt_pipe_t *pipe = &data->display.pipes[data->pipe];
+	igt_crtc_t *crtc = data->crtc;
 
-	igt_pipe_obj_replace_prop_blob(pipe, IGT_CRTC_GAMMA_LUT, NULL, 0);
+	igt_crtc_replace_prop_blob(crtc, IGT_CRTC_GAMMA_LUT, NULL, 0);
 }
 
 static bool test_plane(data_t *data)
@@ -514,10 +515,10 @@ static bool test_pipe(data_t *data)
 	bool run_in_simulation = igt_run_in_simulation();
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(data->pipe), igt_output_name(data->output));
+		 igt_crtc_name(data->crtc), igt_output_name(data->output));
 
 	if (data->format == DRM_FORMAT_C8 &&
-	    !igt_pipe_obj_has_prop(&data->display.pipes[data->pipe],
+	    !igt_crtc_has_prop(data->crtc,
 				   IGT_CRTC_GAMMA_LUT))
 		return false;
 
@@ -536,7 +537,8 @@ static bool test_pipe(data_t *data)
 	igt_create_fb(data->drm_fd, width, height,
 		      data->format, data->modifier, &data->small_fb);
 
-	igt_output_set_pipe(data->output, data->pipe);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	primary = igt_output_get_plane_type(data->output, DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, NULL);
@@ -564,10 +566,10 @@ static bool test_pipe(data_t *data)
 	igt_display_commit2(&data->display, data->display.is_atomic ?
 			    COMMIT_ATOMIC : COMMIT_UNIVERSAL);
 
-	data->pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe,
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	for_each_plane_on_pipe(&data->display, data->pipe, data->plane) {
+	for_each_plane_on_pipe(&data->display, data->crtc->pipe, data->plane) {
 		ret = test_plane(data);
 		if (ret || run_in_simulation)
 			break;
@@ -593,9 +595,10 @@ max_hw_stride_async_flip_test(data_t *data)
 	igt_require(data->display.is_atomic);
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(data->pipe), igt_output_name(data->output));
+		 igt_crtc_name(data->crtc), igt_output_name(data->output));
 
-	igt_output_set_pipe(data->output, data->pipe);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	primary = igt_output_get_plane_type(data->output, DRM_PLANE_TYPE_PRIMARY);
 
@@ -629,7 +632,7 @@ max_hw_stride_async_flip_test(data_t *data)
 		 data->hw_stride);
 	generate_pattern(data, &data->big_fb_flip[1], 640, 480);
 
-	data->pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe,
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 	igt_pipe_crc_start(data->pipe_crc);
 
@@ -682,6 +685,7 @@ max_hw_stride_async_flip_test(data_t *data)
 
 static void test_scanout(data_t *data)
 {
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 
 	igt_require(data->format == DRM_FORMAT_C8 ||
@@ -705,10 +709,12 @@ static void test_scanout(data_t *data)
 	max_fb_size(data, &data->big_fb_width, &data->big_fb_height,
 		    data->format, data->modifier);
 
-	for_each_pipe_with_valid_output(&data->display, data->pipe, data->output) {
+	for_each_crtc_with_valid_output(&data->display, crtc, data->output) {
+		data->crtc = crtc;
 		igt_display_reset(&data->display);
 
-		igt_output_set_pipe(data->output, data->pipe);
+		igt_output_set_crtc(data->output,
+				    crtc);
 		if (!intel_pipe_output_combo_valid(&data->display))
 			continue;
 
@@ -905,7 +911,7 @@ static void test_cleanup(data_t *data)
 		return;
 
 	igt_pipe_crc_free(data->pipe_crc);
-	igt_output_set_pipe(data->output, PIPE_NONE);
+	igt_output_set_crtc(data->output, NULL);
 	igt_remove_fb(data->drm_fd, &data->big_fb);
 	igt_remove_fb(data->drm_fd, &data->big_fb_flip[0]);
 	igt_remove_fb(data->drm_fd, &data->big_fb_flip[1]);
@@ -1103,15 +1109,18 @@ int igt_main()
 				for (int k = 0; k < ARRAY_SIZE(rotations); k++) {
 					data.rotation = rotations[k].rotation | fliptab[l].flip;
 
-					// this combination will never happen.
-					if (igt_rotation_90_or_270(data.rotation) ||
-					    (fliptab[l].flip == IGT_REFLECT_X && modifiers[i].modifier == DRM_FORMAT_MOD_LINEAR))
+					if (igt_rotation_90_or_270(data.rotation))
 						continue;
 
 					igt_describe("test maximum hardware supported stride length for given bpp and modifiers.");
 					igt_subtest_f("%s-max-hw-stride-%dbpp-rotate-%d%s", modifiers[i].name,
 						formats[j].bpp, rotations[k].angle, fliptab[l].flipname) {
 						igt_require(intel_display_ver(intel_get_drm_devid(data.drm_fd)) >= 5);
+
+						if(fliptab[l].flip == IGT_REFLECT_X &&
+						   modifiers[i].modifier == DRM_FORMAT_MOD_LINEAR)
+							igt_require(intel_display_ver(data.devid) >= 35);
+
 						data.max_hw_fb_width = min(data.hw_stride / (formats[j].bpp >> 3), data.max_fb_width);
 
 						test_scanout(&data);

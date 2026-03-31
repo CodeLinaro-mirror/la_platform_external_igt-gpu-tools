@@ -7,6 +7,17 @@
 #include "panthor_drm.h"
 
 /**
+ * igt_panthor_skip_on_big_endian:
+ *
+ * Skip Panthor test on big-endian machines.
+ */
+void igt_panthor_skip_on_big_endian(void)
+{
+	igt_skip_on_f(__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__,
+		      "Panthor is unsupported on big-endian arch\n");
+}
+
+/**
  * igt_panthor_group_create:
  * @fd: device file descriptor
  * @group_create: pointer to group creation structure
@@ -234,12 +245,13 @@ void igt_panthor_vm_destroy(int fd, uint32_t vm_id, int err)
  *
  * Bind a buffer object to a virtual address in the specified VM.
  */
-void igt_panthor_vm_bind(int fd, uint32_t vm_id, uint32_t bo_handle,
-			 uint64_t va, uint64_t size, uint32_t flags, int err)
+void igt_panthor_vm_bind_offset(int fd, uint32_t vm_id, uint32_t bo_handle, uint64_t va,
+				uint64_t size, uint64_t offset, uint32_t flags, int err)
 {
 	struct drm_panthor_vm_bind_op bind_op = {
 		.flags = flags,
 		.bo_handle = bo_handle,
+		.bo_offset = offset,
 		.va = va,
 		.size = size,
 	};

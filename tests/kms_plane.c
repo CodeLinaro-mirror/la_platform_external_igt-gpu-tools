@@ -72,13 +72,32 @@
  */
 
 /**
- * SUBTEST: pixel-%s
+ * SUBTEST: pixel-format-%s-modifier
  * Description: verify the pixel formats for given plane and pipe
+ *
+ * SUBTEST: pixel-format-%s-modifier-source-clamping
+ * Description: verify the pixel formats for given plane and pipe with source clamping
  *
  * arg[1]:
  *
- * @format:
- * @format-source-clamping:          with source clamping
+ * @x-tiled:                     x tiled
+ * @y-tiled:                     y tiled
+ * @yf-tiled:                    yf tiled
+ * @y-tiled-ccs:                 y tiled ccs
+ * @yf-tiled-ccs:                yf tiled ccs
+ * @y-tiled-gen12-rc-ccs:        y tiled gen12 rc ccs
+ * @y-tiled-gen12-mc-ccs:        y tiled gen12 mc ccs
+ * @y-tiled-gen12-rc-ccs-cc:     y tiled gen12 rc ccs cc
+ * @4-tiled:                     4 tiled
+ * @4-tiled-dg2-rc-ccs:          4 tiled dg2 rc ccs
+ * @4-tiled-dg2-mc-ccs:          4 tiled dg2 mc ccs
+ * @4-tiled-dg2-rc-ccs-cc:       4 tiled dg2 rc ccs cc
+ * @4-tiled-mtl-rc-ccs:          4 tiled mtl rc ccs
+ * @4-tiled-mtl-mc-ccs:          4 tiled mtl mc ccs
+ * @4-tiled-mtl-rc-ccs-cc:       4 tiled mtl rc ccs cc
+ * @4-tiled-lnl-ccs:             4 tiled lnl ccs
+ * @4-tiled-bmg-ccs:             4 tiled bmg ccs
+ * @linear:                      linear
  */
 
 /*
@@ -114,6 +133,7 @@ typedef struct {
 	uint32_t crop;
 	bool extended;
 	unsigned int flags;
+	uint64_t mod;
 } data_t;
 
 static bool all_pipes;
@@ -125,12 +145,12 @@ static color_t blue  = { 0.0f, 0.0f, 1.0f };
 /*
  * Common code across all tests, acting on data_t
  */
-static void test_init(data_t *data, enum pipe pipe)
+static void test_init(data_t *data, igt_crtc_t *crtc)
 {
-	igt_require(data->display.pipes[pipe].n_planes > 0);
+	igt_require(crtc->n_planes > 0);
 	if (data->pipe_crc)
 		igt_pipe_crc_free(data->pipe_crc);
-	data->pipe_crc = igt_pipe_crc_new(data->drm_fd, pipe,
+	data->pipe_crc = igt_crtc_crc_new(crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 	igt_display_reset(&data->display);
 }
@@ -147,6 +167,31 @@ enum {
 	TEST_PANNING_TOP_LEFT           = 1 << 2,
 	TEST_PANNING_BOTTOM_RIGHT       = 1 << 3,
 	TEST_SUSPEND_RESUME             = 1 << 4,
+	TEST_PIXEL_FORMAT               = 1 << 5,
+};
+
+static const struct {
+	uint64_t modifier;
+	const char *str;
+} modifiers[] = {
+	{I915_FORMAT_MOD_X_TILED, "x-tiled"},
+	{I915_FORMAT_MOD_Y_TILED, "y-tiled"},
+	{I915_FORMAT_MOD_Yf_TILED, "yf-tiled"},
+	{I915_FORMAT_MOD_Y_TILED_CCS, "y-tiled-ccs"},
+	{I915_FORMAT_MOD_Yf_TILED_CCS, "yf-tiled-ccs"},
+	{I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS, "y-tiled-gen12-rc-ccs"},
+	{I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS, "y-tiled-gen12-mc-ccs"},
+	{I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS_CC, "y-tiled-gen12-rc-ccs-cc"},
+	{I915_FORMAT_MOD_4_TILED, "4-tiled"},
+	{I915_FORMAT_MOD_4_TILED_DG2_RC_CCS, "4-tiled-dg2-rc-ccs"},
+	{I915_FORMAT_MOD_4_TILED_DG2_MC_CCS, "4-tiled-dg2-mc-ccs"},
+	{I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC, "4-tiled-dg2-rc-ccs-cc"},
+	{I915_FORMAT_MOD_4_TILED_MTL_RC_CCS, "4-tiled-mtl-rc-ccs"},
+	{I915_FORMAT_MOD_4_TILED_MTL_MC_CCS, "4-tiled-mtl-mc-ccs"},
+	{I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC, "4-tiled-mtl-rc-ccs-cc"},
+	{I915_FORMAT_MOD_4_TILED_LNL_CCS, "4-tiled-lnl-ccs"},
+	{I915_FORMAT_MOD_4_TILED_BMG_CCS, "4-tiled-bmg-ccs"},
+	{DRM_FORMAT_MOD_LINEAR, "linear"},
 };
 
 /*
@@ -185,7 +230,7 @@ create_fb_for_mode(data_t *data, drmModeModeInfo *mode,
 }
 
 static void
-test_grab_crc(data_t *data, igt_output_t *output, enum pipe pipe,
+test_grab_crc(data_t *data, igt_output_t *output, igt_crtc_t *crtc,
 	      color_t *fb_color, unsigned int flags, igt_crc_t *crc /* out */)
 {
 	struct igt_fb fb;
@@ -194,7 +239,7 @@ test_grab_crc(data_t *data, igt_output_t *output, enum pipe pipe,
 	char *crc_str;
 	int ret;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	primary = igt_output_get_plane(output, 0);
 
@@ -255,8 +300,7 @@ typedef struct {
 } test_position_t;
 
 static void
-test_plane_position_with_output(data_t *data,
-				enum pipe pipe,
+test_plane_position_with_output(data_t *data, igt_crtc_t *crtc,
 				int plane,
 				igt_output_t *output,
 				igt_crc_t *reference_crc,
@@ -269,9 +313,9 @@ test_plane_position_with_output(data_t *data,
 	igt_crc_t crc, crc2;
 
 	igt_debug("Testing connector %s using pipe %s plane %d\n", igt_output_name(output),
-		  kmstest_pipe_name(pipe), plane);
+		  igt_crtc_name(crtc), plane);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
@@ -327,7 +371,7 @@ test_plane_position_with_output(data_t *data,
 	igt_plane_set_fb(sprite, NULL);
 
 	/* reset the constraint on the pipe */
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&data->display, data->display.is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 
 	igt_remove_fb(data->drm_fd, &primary_fb);
@@ -335,21 +379,25 @@ test_plane_position_with_output(data_t *data,
 }
 
 static void
-test_plane_position(data_t *data, enum pipe pipe)
+test_plane_position(data_t *data, igt_crtc_t *crtc)
 {
-	int n_planes = data->display.pipes[pipe].n_planes;
+	int n_planes = crtc->n_planes;
 	igt_output_t *output = data->output;
 	igt_crc_t reference_crc;
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(pipe), igt_output_name(output));
+		 igt_crtc_name(crtc), igt_output_name(output));
 
-	test_init(data, pipe);
-	test_grab_crc(data, output, pipe, &green, data->flags, &reference_crc);
+	test_init(data, crtc);
+	test_grab_crc(data, output, crtc,
+		      &green, data->flags,
+		      &reference_crc);
 
 	for (int plane = 1; plane < n_planes; plane++) {
-		igt_dynamic_f("pipe-%s-plane-%d", kmstest_pipe_name(pipe), plane)
-			test_plane_position_with_output(data, pipe, plane, output,
+		igt_dynamic_f("pipe-%s-plane-%d", igt_crtc_name(crtc), plane)
+			test_plane_position_with_output(data,
+							crtc,
+							plane, output,
 							&reference_crc, data->flags);
 	}
 
@@ -396,8 +444,7 @@ create_fb_for_mode_panning(data_t *data, drmModeModeInfo *mode,
 }
 
 static void
-test_plane_panning_with_output(data_t *data,
-			       enum pipe pipe,
+test_plane_panning_with_output(data_t *data, igt_crtc_t *crtc,
 			       igt_output_t *output,
 			       igt_crc_t *ref_crc,
 			       unsigned int flags)
@@ -407,13 +454,13 @@ test_plane_panning_with_output(data_t *data,
 	drmModeModeInfo *mode;
 	igt_crc_t crc;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 	primary = igt_output_get_plane(output, 0);
 
 	igt_debug("Testing connector %s using pipe %s, mode %s\n", igt_output_name(output),
-		  kmstest_pipe_name(pipe), mode->name);
+		  igt_crtc_name(crtc), mode->name);
 
 	create_fb_for_mode_panning(data, mode, &primary_fb);
 	igt_plane_set_fb(primary, &primary_fb);
@@ -436,7 +483,7 @@ test_plane_panning_with_output(data_t *data,
 	igt_plane_set_fb(primary, NULL);
 
 	/* reset states to neutral values, assumed by other tests */
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_fb_set_position(&primary_fb, primary, 0, 0);
 	igt_display_commit2(&data->display, data->display.is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 
@@ -444,7 +491,7 @@ test_plane_panning_with_output(data_t *data,
 }
 
 static void
-test_plane_panning(data_t *data, enum pipe pipe)
+test_plane_panning(data_t *data, igt_crtc_t *crtc)
 {
 	bool mode_found = false;
 	uint64_t mem_size = 0;
@@ -452,9 +499,9 @@ test_plane_panning(data_t *data, enum pipe pipe)
 	igt_crc_t ref_crc;
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(pipe), igt_output_name(output));
+		 igt_crtc_name(crtc), igt_output_name(output));
 
-	test_init(data, pipe);
+	test_init(data, crtc);
 
 	if (is_i915_device(data->drm_fd)) {
 		for_each_memory_region(r, data->drm_fd)
@@ -492,11 +539,20 @@ test_plane_panning(data_t *data, enum pipe pipe)
 	igt_require_f(mode_found, "All connector modes are skipped due to low memory\n");
 
 	if (data->flags & TEST_PANNING_TOP_LEFT)
-		test_grab_crc(data, output, pipe, &red, data->flags, &ref_crc);
+		test_grab_crc(data, output,
+			      crtc, &red,
+			      data->flags,
+			      &ref_crc);
 	else
-		test_grab_crc(data, output, pipe, &blue, data->flags, &ref_crc);
+		test_grab_crc(data, output,
+			      crtc, &blue,
+			      data->flags,
+			      &ref_crc);
 
-	test_plane_panning_with_output(data, pipe, output, &ref_crc, data->flags);
+	test_plane_panning_with_output(data,
+				       crtc,
+				       output, &ref_crc,
+				       data->flags);
 
 	test_fini(data);
 }
@@ -519,15 +575,14 @@ static const color_t colors_reduced[] = {
 	{ 0.0f, 1.0f, 1.0f, },
 };
 
-static void set_legacy_lut(data_t *data, enum pipe pipe,
+static void set_legacy_lut(data_t *data, igt_crtc_t *crtc,
 			   uint16_t mask)
 {
-	igt_pipe_t *pipe_obj = &data->display.pipes[pipe];
 	drmModeCrtc *drm_crtc;
 	uint16_t *lut;
 	int i, lut_size;
 
-	drm_crtc = drmModeGetCrtc(data->drm_fd, pipe_obj->crtc_id);
+	drm_crtc = drmModeGetCrtc(data->drm_fd, crtc->crtc_id);
 	lut_size = drm_crtc->gamma_size;
 	drmModeFreeCrtc(drm_crtc);
 
@@ -540,21 +595,20 @@ static void set_legacy_lut(data_t *data, enum pipe pipe,
 	for (i = 0; i < lut_size; i++)
 		lut[i] = (i * 0xffff / (lut_size - 1)) & mask;
 
-	igt_assert_eq(drmModeCrtcSetGamma(data->drm_fd, pipe_obj->crtc_id,
+	igt_assert_eq(drmModeCrtcSetGamma(data->drm_fd, crtc->crtc_id,
 					  lut_size, lut, lut, lut), 0);
 
 	free(lut);
 }
 
-static bool set_c8_legacy_lut(data_t *data, enum pipe pipe,
+static bool set_c8_legacy_lut(data_t *data, igt_crtc_t *crtc,
 			      uint16_t mask)
 {
-	igt_pipe_t *pipe_obj = &data->display.pipes[pipe];
 	drmModeCrtc *drm_crtc;
 	uint16_t *r, *g, *b;
 	int i, lut_size;
 
-	drm_crtc = drmModeGetCrtc(data->drm_fd, pipe_obj->crtc_id);
+	drm_crtc = drmModeGetCrtc(data->drm_fd, crtc->crtc_id);
 	lut_size = drm_crtc->gamma_size;
 	drmModeFreeCrtc(drm_crtc);
 
@@ -572,7 +626,7 @@ static bool set_c8_legacy_lut(data_t *data, enum pipe pipe,
 		b[i] = (((i & 0x03) >> 0) * 0xffff / 0x3) & mask;
 	}
 
-	igt_assert_eq(drmModeCrtcSetGamma(data->drm_fd, pipe_obj->crtc_id,
+	igt_assert_eq(drmModeCrtcSetGamma(data->drm_fd, crtc->crtc_id,
 					  lut_size, r, g, b), 0);
 
 	free(r);
@@ -605,7 +659,7 @@ static void draw_entire_color_array(data_t *data, cairo_t *cr, uint32_t format,
 	}
 }
 
-static void prepare_format_color(data_t *data, enum pipe pipe,
+static void prepare_format_color(data_t *data,
 				 igt_plane_t *plane,
 				 uint32_t format, uint64_t modifier,
 				 int width, int height,
@@ -687,7 +741,7 @@ static void capture_crc(data_t *data, unsigned int vblank, igt_crc_t *crc)
 		      crc->frame, vblank);
 }
 
-static void capture_format_crcs_single(data_t *data, enum pipe pipe,
+static void capture_format_crcs_single(data_t *data, igt_crtc_t *crtc,
 				       igt_plane_t *plane,
 				       uint32_t format, uint64_t modifier,
 				       int width, int height,
@@ -698,7 +752,7 @@ static void capture_format_crcs_single(data_t *data, enum pipe pipe,
 	struct igt_fb old_fb = *fb;
 	const color_t black = { 0.0f, 0.0f, 0.0f };
 
-	prepare_format_color(data, pipe, plane, format, modifier,
+	prepare_format_color(data, plane, format, modifier,
 			     width, height, encoding, range, &black, fb, true);
 
 	igt_display_commit2(&data->display, data->display.is_atomic ?
@@ -709,7 +763,7 @@ static void capture_format_crcs_single(data_t *data, enum pipe pipe,
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, &crc[0]);
 }
 
-static void capture_format_crcs_multiple(data_t *data, enum pipe pipe,
+static void capture_format_crcs_multiple(data_t *data, igt_crtc_t *crtc,
 					 igt_plane_t *plane,
 					 uint32_t format, uint64_t modifier,
 					 int width, int height,
@@ -727,7 +781,7 @@ restart_round:
 		struct igt_fb old_fb = *fb;
 		int ret;
 
-		prepare_format_color(data, pipe, plane, format, modifier,
+		prepare_format_color(data, plane, format, modifier,
 				     width, height, encoding, range, c, fb,
 				     false);
 
@@ -779,7 +833,9 @@ restart_round:
 			 * is when the next flip latches.
 			 */
 			if (i >= 1)
-				vblank[i - 1] = kmstest_get_vblank(data->drm_fd, pipe, 0) + 1;
+				vblank[i - 1] = kmstest_get_vblank(data->drm_fd,
+								   crtc->pipe,
+								   0) + 1;
 
 			/*
 			 * Can't use drmModePageFlip() since we need to
@@ -790,10 +846,7 @@ restart_round:
 
 			/* setplane for the cursor does not block */
 			if (plane->type == DRM_PLANE_TYPE_CURSOR) {
-				igt_display_t *display = &data->display;
-
-				igt_wait_for_vblank(data->drm_fd,
-						display->pipes[pipe].crtc_offset);
+				igt_wait_for_vblank(crtc);
 			}
 		}
 
@@ -818,7 +871,8 @@ restart_round:
 		 * The last crc is available earliest one
 		 * frame after the last flip latched.
 		 */
-		vblank[i - 1] = kmstest_get_vblank(data->drm_fd, pipe, 0) + 1;
+		vblank[i - 1] = kmstest_get_vblank(data->drm_fd, crtc->pipe,
+						   0) + 1;
 	}
 
 	/*
@@ -837,7 +891,7 @@ static bool use_multiple_colors(data_t *data, uint32_t format)
 	return data->extended || igt_format_is_yuv_semiplanar(format);
 }
 
-static bool test_format_plane_colors(data_t *data, enum pipe pipe,
+static bool test_format_plane_colors(data_t *data, igt_crtc_t *crtc,
 				     igt_plane_t *plane,
 				     uint32_t format, uint64_t modifier,
 				     int width, int height,
@@ -853,12 +907,18 @@ static bool test_format_plane_colors(data_t *data, enum pipe pipe,
 	int i, total_crcs = 1;
 
 	if (use_multiple_colors(data, format)) {
-		capture_format_crcs_multiple(data, pipe, plane, format, modifier,
+		capture_format_crcs_multiple(data,
+					     crtc,
+					     plane, format,
+					     modifier,
 					     width, height, encoding, range, crc,
 					     fb);
 		total_crcs = data->num_colors;
 	} else {
-		capture_format_crcs_single(data, pipe, plane, format, modifier,
+		capture_format_crcs_single(data,
+					   crtc,
+					   plane, format,
+					   modifier,
 					   width, height, encoding, range, crc,
 					   fb);
 	}
@@ -873,14 +933,14 @@ static bool test_format_plane_colors(data_t *data, enum pipe pipe,
 
 	igt_warn_on_f(crc_mismatch_count,
 		      "CRC mismatches with format " IGT_FORMAT_FMT " on %s.%u with %d/%d solid colors tested (0x%X)\n",
-		      IGT_FORMAT_ARGS(format), kmstest_pipe_name(pipe),
+		      IGT_FORMAT_ARGS(format), igt_crtc_name(crtc),
 		      plane->index, crc_mismatch_count, data->num_colors,
 		      crc_mismatch_mask);
 
 	return result;
 }
 
-static bool test_format_plane_rgb(data_t *data, enum pipe pipe,
+static bool test_format_plane_rgb(data_t *data, igt_crtc_t *crtc,
 				  igt_plane_t *plane,
 				  uint32_t format, uint64_t modifier,
 				  int width, int height,
@@ -889,9 +949,11 @@ static bool test_format_plane_rgb(data_t *data, enum pipe pipe,
 {
 	igt_info("Testing format " IGT_FORMAT_FMT " / modifier " IGT_MODIFIER_FMT " on %s.%u\n",
 		 IGT_FORMAT_ARGS(format), IGT_MODIFIER_ARGS(modifier),
-		 kmstest_pipe_name(pipe), plane->index);
+		 igt_crtc_name(crtc), plane->index);
 
-	return test_format_plane_colors(data, pipe, plane,
+	return test_format_plane_colors(data,
+					crtc,
+					plane,
 					format, modifier,
 					width, height,
 					IGT_COLOR_YCBCR_BT601,
@@ -899,7 +961,7 @@ static bool test_format_plane_rgb(data_t *data, enum pipe pipe,
 					ref_crc, fb);
 }
 
-static bool test_format_plane_yuv(data_t *data, enum pipe pipe,
+static bool test_format_plane_yuv(data_t *data, igt_crtc_t *crtc,
 				  igt_plane_t *plane,
 				  uint32_t format, uint64_t modifier,
 				  int width, int height,
@@ -925,15 +987,21 @@ static bool test_format_plane_yuv(data_t *data, enum pipe pipe,
 						     igt_color_range_to_str(r)))
 				continue;
 
+			if (r != IGT_COLOR_YCBCR_FULL_RANGE &&
+			    igt_run_in_simulation())
+				continue;
+
 			igt_info("Testing format " IGT_FORMAT_FMT " / modifier " IGT_MODIFIER_FMT
 				 " (%s, %s) on %s.%u\n", IGT_FORMAT_ARGS(format),
 				 IGT_MODIFIER_ARGS(modifier),
 				 igt_color_encoding_to_str(e),
 				 igt_color_range_to_str(r),
-				 kmstest_pipe_name(pipe),
+				 igt_crtc_name(crtc),
 				 plane->index);
 
-			result &= test_format_plane_colors(data, pipe, plane,
+			result &= test_format_plane_colors(data,
+							   crtc,
+							   plane,
 							   format, modifier,
 							   width, height,
 							   e, r, ref_crc, fb);
@@ -1029,7 +1097,7 @@ static bool skip_format_mod(data_t *data,
 	return false;
 }
 
-static void test_format_plane(data_t *data, enum pipe pipe,
+static void test_format_plane(data_t *data, igt_crtc_t *crtc,
 			      igt_output_t *output, igt_plane_t *plane, igt_fb_t *primary_fb)
 {
 	struct igt_fb fb = {};
@@ -1041,12 +1109,18 @@ static void test_format_plane(data_t *data, enum pipe pipe,
 	struct format_mod ref = {};
 	igt_crc_t* crcset;
 	bool result = true;
+	bool found = false;
 
-	/*
-	 * No clamping test for cursor plane
-	 */
-	if (data->crop != 0 && plane->type == DRM_PLANE_TYPE_CURSOR)
-		return;
+	for (int i = 0; i < plane->format_mod_count; i++) {
+		if (data->mod == plane->modifiers[i]) {
+			found = true;
+			break;
+		}
+	}
+
+	igt_skip_on_f(!found,
+		      "Modifier " IGT_MODIFIER_FMT " not supported on plane %d\n",
+		      IGT_MODIFIER_ARGS(data->mod), plane->index);
 
 	igt_vec_init(&tested_formats, sizeof(struct format_mod));
 
@@ -1057,10 +1131,9 @@ static void test_format_plane(data_t *data, enum pipe pipe,
 		ref.format = DRM_FORMAT_XRGB8888;
 		ref.modifier = DRM_FORMAT_MOD_LINEAR;
 	} else {
-		if (!plane->drm_plane) {
-			igt_debug("Only legacy cursor ioctl supported, skipping cursor plane\n");
-			return;
-		}
+		if (!plane->drm_plane)
+			igt_skip("Only legacy cursor ioctl supported, skipping cursor plane\n");
+
 		do_or_die(drmGetCap(data->drm_fd, DRM_CAP_CURSOR_WIDTH, &width));
 		do_or_die(drmGetCap(data->drm_fd, DRM_CAP_CURSOR_HEIGHT, &height));
 		ref.format = DRM_FORMAT_ARGB8888;
@@ -1069,22 +1142,28 @@ static void test_format_plane(data_t *data, enum pipe pipe,
 
 	igt_debug("Testing connector %s on %s plane %s.%u\n",
 		  igt_output_name(output), kmstest_plane_type_name(plane->type),
-		  kmstest_pipe_name(pipe), plane->index);
+		  igt_crtc_name(crtc), plane->index);
 
 	igt_pipe_crc_start(data->pipe_crc);
 
 	igt_info("Testing format " IGT_FORMAT_FMT " / modifier " IGT_MODIFIER_FMT " on %s.%u\n",
 		 IGT_FORMAT_ARGS(ref.format), IGT_MODIFIER_ARGS(ref.modifier),
-		 kmstest_pipe_name(pipe), plane->index);
+		 igt_crtc_name(crtc), plane->index);
 
 	check_allowed_plane_size_64x64(data, plane, &width, &height, ref.format);
 
-	capture_format_crcs_single(data, pipe, plane, ref.format, ref.modifier,
+	capture_format_crcs_single(data,
+				   crtc,
+				   plane, ref.format,
+				   ref.modifier,
 				   width, height, IGT_COLOR_YCBCR_BT709,
 				   IGT_COLOR_YCBCR_LIMITED_RANGE,
 				   ref_crc[SINGLE_CRC_SET], &fb);
 
-	capture_format_crcs_multiple(data, pipe, plane, ref.format, ref.modifier,
+	capture_format_crcs_multiple(data,
+				     crtc,
+				     plane, ref.format,
+				     ref.modifier,
 				     width, height, IGT_COLOR_YCBCR_BT709,
 				     IGT_COLOR_YCBCR_LIMITED_RANGE,
 				     ref_crc[MULTIPLE_CRC_SET], &fb);
@@ -1102,6 +1181,9 @@ static void test_format_plane(data_t *data, enum pipe pipe,
 			.modifier = plane->modifiers[i],
 		};
 
+		if (data->mod != f.modifier)
+			continue;
+
 		if (f.format == ref.format &&
 		    f.modifier == ref.modifier)
 			continue;
@@ -1111,13 +1193,13 @@ static void test_format_plane(data_t *data, enum pipe pipe,
 				 IGT_MODIFIER_FMT " on %s.%u\n",
 				 IGT_FORMAT_ARGS(f.format),
 				 IGT_MODIFIER_ARGS(f.modifier),
-				 kmstest_pipe_name(pipe),
+				 igt_crtc_name(crtc),
 				 plane->index);
 			continue;
 		}
 
 		if (f.format == DRM_FORMAT_C8) {
-			if (!set_c8_legacy_lut(data, pipe, LUT_MASK))
+			if (!set_c8_legacy_lut(data, crtc, LUT_MASK))
 				continue;
 		} else {
 			if (!igt_fb_supported_format(f.format))
@@ -1128,18 +1210,24 @@ static void test_format_plane(data_t *data, enum pipe pipe,
 				 MULTIPLE_CRC_SET : SINGLE_CRC_SET];
 
 		if (igt_format_is_yuv(f.format))
-			result &= test_format_plane_yuv(data, pipe, plane,
+			result &= test_format_plane_yuv(data,
+							crtc,
+							plane,
 							f.format, f.modifier,
 							width, height,
 							crcset, &fb);
 		else
-			result &= test_format_plane_rgb(data, pipe, plane,
+			result &= test_format_plane_rgb(data,
+							crtc,
+							plane,
 							f.format, f.modifier,
 							width, height,
 							crcset, &fb);
 
 		if (f.format == DRM_FORMAT_C8)
-			set_legacy_lut(data, pipe, LUT_MASK);
+			set_legacy_lut(data,
+				       crtc,
+				       LUT_MASK);
 	}
 
 	igt_pipe_crc_stop(data->pipe_crc);
@@ -1190,7 +1278,7 @@ static bool skip_plane(data_t *data, igt_plane_t *plane)
 }
 
 static void
-test_pixel_formats(data_t *data, enum pipe pipe)
+test_pixel_formats(data_t *data, igt_crtc_t *crtc)
 {
 	struct igt_fb primary_fb;
 	igt_plane_t *primary;
@@ -1207,36 +1295,44 @@ test_pixel_formats(data_t *data, enum pipe pipe)
 	}
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(pipe), igt_output_name(output));
+		 igt_crtc_name(crtc), igt_output_name(output));
 
-	test_init(data, pipe);
+	test_init(data, crtc);
 
 	mode = igt_output_get_mode(output);
 
 	igt_create_fb(data->drm_fd, mode->hdisplay, mode->vdisplay,
 		      DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, &primary_fb);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, &primary_fb);
 
 	igt_display_commit2(&data->display, data->display.is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 
-	set_legacy_lut(data, pipe, LUT_MASK);
+	set_legacy_lut(data, crtc, LUT_MASK);
 
-	for_each_plane_on_pipe(&data->display, pipe, plane) {
+	for_each_plane_on_pipe(&data->display, crtc->pipe, plane) {
 		if (skip_plane(data, plane))
 			continue;
-		igt_dynamic_f("pipe-%s-plane-%u", kmstest_pipe_name(pipe), plane->index)
-			test_format_plane(data, pipe, output, plane, &primary_fb);
+		/* Cursor planes do not support cropping, skip generating subtest on cursor plane */
+		if (data->crop != 0 && plane->type == DRM_PLANE_TYPE_CURSOR)
+			continue;
+
+		igt_dynamic_f("pipe-%s-plane-%u", igt_crtc_name(crtc),
+			      plane->index)
+			test_format_plane(data,
+					  crtc,
+					  output, plane,
+					  &primary_fb);
 	}
 
 	test_fini(data);
 
-	set_legacy_lut(data, pipe, 0xffff);
+	set_legacy_lut(data, crtc, 0xffff);
 
 	igt_plane_set_fb(primary, NULL);
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&data->display, data->display.is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 
 	igt_remove_fb(data->drm_fd, &primary_fb);
@@ -1244,11 +1340,14 @@ test_pixel_formats(data_t *data, enum pipe pipe)
 
 static void test_planar_settings(data_t *data)
 {
-	enum pipe pipe = PIPE_A;
+	igt_display_t *display = &data->display;
+	igt_crtc_t *crtc = igt_crtc_for_pipe(display, PIPE_A);
 	igt_output_t *output;
-	igt_fb_t fb;
+	igt_fb_t fb, fb_ref;
 	igt_plane_t *primary;
+	igt_crc_t crc, crc_ref;
 	int devid;
+	int display_ver = -1;
 	int rval;
 
 	/*
@@ -1260,12 +1359,14 @@ static void test_planar_settings(data_t *data)
 		igt_require_intel(data->drm_fd);
 		devid = intel_get_drm_devid(data->drm_fd);
 		igt_require(intel_display_ver(devid) >= 9);
+		display_ver = intel_display_ver(devid);
+		igt_require(display_ver >= 9);
 	}
 
-	output = igt_get_single_output_for_pipe(&data->display, pipe);
+	output = igt_get_single_output_for_pipe(&data->display, crtc->pipe);
 	igt_require(output);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 
 	igt_display_commit_atomic(&data->display,
@@ -1277,14 +1378,15 @@ static void test_planar_settings(data_t *data)
 				     DRM_FORMAT_MOD_LINEAR)) {
 		int expected_rval = -EINVAL;
 
-		if (intel_display_ver(devid) >= 20)
+		if (display_ver >= 20)
 			expected_rval = 0;
 
 		igt_create_fb(data->drm_fd, 257, 256,
 			      DRM_FORMAT_NV12, DRM_FORMAT_MOD_LINEAR, &fb);
 		igt_plane_set_fb(primary, &fb);
 		rval = igt_display_try_commit_atomic(&data->display,
-						     DRM_MODE_ATOMIC_ALLOW_MODESET,
+						     DRM_MODE_ATOMIC_ALLOW_MODESET |
+						     DRM_MODE_ATOMIC_TEST_ONLY,
 						     NULL);
 		igt_remove_fb(data->drm_fd, &fb);
 		igt_assert_f(rval == expected_rval, "Odd width NV12 framebuffer\n");
@@ -1297,14 +1399,15 @@ static void test_planar_settings(data_t *data)
 				     DRM_FORMAT_MOD_LINEAR)) {
 		int expected_rval = -EINVAL;
 
-		if (intel_display_ver(devid) >= 20)
+		if (display_ver >= 20 && display_ver < 35)
 			expected_rval = 0;
 
 		igt_create_fb(data->drm_fd, 256, 257,
 			      DRM_FORMAT_NV12, DRM_FORMAT_MOD_LINEAR, &fb);
 		igt_plane_set_fb(primary, &fb);
 		rval = igt_display_try_commit_atomic(&data->display,
-						     DRM_MODE_ATOMIC_ALLOW_MODESET,
+						     DRM_MODE_ATOMIC_ALLOW_MODESET |
+						     DRM_MODE_ATOMIC_TEST_ONLY,
 						     NULL);
 		igt_remove_fb(data->drm_fd, &fb);
 		igt_assert_f(rval == expected_rval, "Odd height NV12 framebuffer\n");
@@ -1316,6 +1419,9 @@ static void test_planar_settings(data_t *data)
 	if (igt_plane_has_format_mod(primary, DRM_FORMAT_NV12,
 				     DRM_FORMAT_MOD_LINEAR)) {
 		int expected_rval = -EINVAL;
+
+		if (display_ver >= 35)
+			expected_rval = 0;
 
 		igt_create_fb(data->drm_fd, 810, 590,
 			      DRM_FORMAT_NV12, DRM_FORMAT_MOD_LINEAR, &fb);
@@ -1330,6 +1436,66 @@ static void test_planar_settings(data_t *data)
 	} else {
 		igt_debug("Odd horizontal pan NV12 framebuffer test skipped\n");
 	}
+
+	if (igt_plane_has_format_mod(primary, DRM_FORMAT_P016,
+					    DRM_FORMAT_MOD_LINEAR)) {
+		int expected_rval = -EINVAL;
+
+		if (display_ver >= 20 && display_ver < 35)
+			expected_rval = 0;
+
+		igt_create_color_fb(data->drm_fd, 256, 260,
+			      DRM_FORMAT_P016, DRM_FORMAT_MOD_LINEAR,
+			      0.0, 0.0, 1.0,
+			      &fb);
+
+		igt_plane_set_fb(primary, &fb);
+		igt_plane_set_position(primary, 1, 1);
+		igt_plane_set_size(primary, 256, 256);
+
+		/* set odd v pan and check with crc fb didn't break */
+		igt_fb_set_position(&fb, primary, 0, 3);
+		igt_fb_set_size(&fb, primary, 256, 256);
+		rval = igt_display_try_commit_atomic(&data->display,
+						     DRM_MODE_ATOMIC_ALLOW_MODESET,
+						     NULL);
+		if (rval == 0) {
+			set_legacy_lut(data,
+				       crtc,
+				       LUT_MASK);
+			igt_wait_for_vblank_count(crtc,
+						  1);
+			data->pipe_crc = igt_crtc_crc_new(crtc,
+							  IGT_PIPE_CRC_SOURCE_AUTO);
+			igt_pipe_crc_collect_crc(data->pipe_crc, &crc);
+
+			igt_create_color_fb(data->drm_fd, 256, 256,
+				DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
+				0.0, 0.0, 1.0,
+				&fb_ref);
+
+			igt_plane_set_fb(primary, &fb_ref);
+			rval = igt_display_try_commit_atomic(&data->display,
+						     DRM_MODE_ATOMIC_ALLOW_MODESET,
+						     NULL);
+
+			igt_pipe_crc_collect_crc(data->pipe_crc, &crc_ref);
+			set_legacy_lut(data,
+				       crtc,
+				       0xffff);
+
+			igt_pipe_crc_free(data->pipe_crc);
+			data->pipe_crc = NULL;
+
+			igt_remove_fb(data->drm_fd, &fb_ref);
+			igt_assert_crc_equal(&crc_ref, &crc);
+		}
+
+		igt_remove_fb(data->drm_fd, &fb);
+		igt_assert_f(rval == expected_rval, "Odd vertical pan P016 framebuffer\n");
+	} else {
+		igt_debug("Odd vertical pan P016 framebuffer test skipped\n");
+	}
 }
 
 static bool is_pipe_limit_reached(int count)
@@ -1340,46 +1506,66 @@ static bool is_pipe_limit_reached(int count)
 		return count >= CRTC_RESTRICT_CNT && !all_pipes;
 }
 
-static void run_test(data_t *data, void (*test)(data_t *, enum pipe))
+static void run_test(data_t *data, void (*test)(data_t *, igt_crtc_t *crtc))
 {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	int count = 0;
 
-	for_each_pipe_with_single_output(&data->display, pipe, data->output) {
+	igt_skip_on_f(((data->flags & TEST_PIXEL_FORMAT) &&
+		       !igt_display_has_format_mod(&data->display,
+		       DRM_FORMAT_XBGR8888, data->mod)),
+		       "Skipping: Modifier " IGT_MODIFIER_FMT
+		       " is not supported on this platform\n",
+		       IGT_MODIFIER_ARGS(data->mod));
+
+	for_each_crtc_with_single_output(&data->display, crtc, data->output) {
+
 		igt_display_reset(&data->display);
 
-		igt_output_set_pipe(data->output, pipe);
+		igt_output_set_crtc(data->output,
+				    crtc);
 		if (!intel_pipe_output_combo_valid(&data->display))
 			continue;
 
-		igt_output_set_pipe(data->output, PIPE_NONE);
-		test(data, pipe);
+		igt_output_set_crtc(data->output, NULL);
+		test(data, crtc);
 
 		if (is_pipe_limit_reached(++count))
 			break;
 	}
 }
 
-static void dynamic_test_handler(data_t *data, enum pipe pipe)
+static void dynamic_test_handler(data_t *data, igt_crtc_t *crtc)
 {
-	igt_dynamic_f("pipe-%s", kmstest_pipe_name(pipe))
-		test_plane_panning(data, pipe);
+	igt_dynamic_f("pipe-%s", igt_crtc_name(crtc))
+		test_plane_panning(data,
+				   crtc);
 }
 
 static void
 run_tests_for_pipe_plane(data_t *data)
 {
-	igt_describe("verify the pixel formats for given plane and pipe");
-	igt_subtest_with_dynamic_f("pixel-format")
-		run_test(data, test_pixel_formats);
-
-	igt_describe("verify the pixel formats for given plane and pipe with source clamping");
-	igt_subtest_with_dynamic_f("pixel-format-source-clamping") {
-		data->crop = 4;
-		run_test(data, test_pixel_formats);
+	for (int i = 0; i < ARRAY_SIZE(modifiers); i++) {
+		igt_describe("verify the pixel formats for given plane and pipe");
+		igt_subtest_with_dynamic_f("pixel-format-%s-modifier", modifiers[i].str) {
+			data->mod = modifiers[i].modifier;
+			data->flags = TEST_PIXEL_FORMAT;
+			run_test(data, test_pixel_formats);
+		}
 	}
 
-	data->crop = 0;
+	for (int i = 0; i < ARRAY_SIZE(modifiers); i++) {
+		igt_describe("verify the pixel formats for given plane and pipe with source clamping");
+		igt_subtest_with_dynamic_f("pixel-format-%s-modifier-source-clamping",
+					   modifiers[i].str) {
+			data->mod = modifiers[i].modifier;
+			data->crop = 4;
+			data->flags = TEST_PIXEL_FORMAT;
+			run_test(data, test_pixel_formats);
+		}
+		data->crop = 0;
+	}
+
 	igt_describe("verify plane position using two planes to create a fully covered screen");
 	igt_subtest_with_dynamic_f("plane-position-covered") {
 		data->flags = 0;

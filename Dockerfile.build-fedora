@@ -12,6 +12,7 @@ RUN dnf install -y \
 	'pkgconfig(pixman-1)' \
 	'pkgconfig(valgrind)' \
 	'pkgconfig(cairo)' \
+	'pkgconfig(libpci)' \
 	'pkgconfig(libudev)' \
 	'pkgconfig(glib-2.0)' \
 	'pkgconfig(gsl)' \
@@ -19,7 +20,7 @@ RUN dnf install -y \
 	'pkgconfig(xmlrpc)' \
 	'pkgconfig(xmlrpc_util)' \
 	'pkgconfig(xmlrpc_client)' \
-	'pkgconfig(json-c)' \
+	'pkgconfig(jansson)' \
 	'pkgconfig(gtk-doc)' \
 	'pkgconfig(xv)' \
 	'pkgconfig(xrandr)' \
