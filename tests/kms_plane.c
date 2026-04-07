@@ -351,6 +351,14 @@ test_plane_position_with_output(data_t *data, igt_crtc_t *crtc,
 
 	igt_display_commit(&data->display);
 
+	/*
+	 * On MediaTek hardware, cursor plane updates are non-blocking and
+	 * CRC needs time to reflect the new plane configuration. Wait for
+	 * a vblank to ensure the update has taken effect.
+	 */
+	if (is_mtk_device(data->drm_fd) && sprite->type == DRM_PLANE_TYPE_CURSOR)
+		igt_wait_for_vblank(crtc);
+
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc);
 	igt_assert_crc_equal(reference_crc, &crc);
 
@@ -760,6 +768,14 @@ static void capture_format_crcs_single(data_t *data, igt_crtc_t *crtc,
 
 	igt_remove_fb(data->drm_fd, &old_fb);
 
+	/*
+	 * On MediaTek hardware, CRC generation needs time to stabilize after
+	 * a pixel format change. Wait for at least one vblank to ensure the
+	 * CRC hardware has updated for the new format.
+	 */
+	if (is_mtk_device(data->drm_fd))
+		igt_wait_for_vblank(crtc);
+
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, &crc[0]);
 }
 
@@ -833,9 +849,8 @@ restart_round:
 			 * is when the next flip latches.
 			 */
 			if (i >= 1)
-				vblank[i - 1] = kmstest_get_vblank(data->drm_fd,
-								   crtc->pipe,
-								   0) + 1;
+				vblank[i - 1] = igt_crtc_get_vblank(crtc,
+								    0) + 1;
 
 			/*
 			 * Can't use drmModePageFlip() since we need to
@@ -871,8 +886,8 @@ restart_round:
 		 * The last crc is available earliest one
 		 * frame after the last flip latched.
 		 */
-		vblank[i - 1] = kmstest_get_vblank(data->drm_fd, crtc->pipe,
-						   0) + 1;
+		vblank[i - 1] = igt_crtc_get_vblank(crtc,
+						    0) + 1;
 	}
 
 	/*
@@ -1312,7 +1327,8 @@ test_pixel_formats(data_t *data, igt_crtc_t *crtc)
 
 	set_legacy_lut(data, crtc, LUT_MASK);
 
-	for_each_plane_on_pipe(&data->display, crtc->pipe, plane) {
+	for_each_plane_on_crtc(crtc,
+			       plane) {
 		if (skip_plane(data, plane))
 			continue;
 		/* Cursor planes do not support cropping, skip generating subtest on cursor plane */
@@ -1341,7 +1357,7 @@ test_pixel_formats(data_t *data, igt_crtc_t *crtc)
 static void test_planar_settings(data_t *data)
 {
 	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, PIPE_A);
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 	igt_fb_t fb, fb_ref;
 	igt_plane_t *primary;
@@ -1363,8 +1379,8 @@ static void test_planar_settings(data_t *data)
 		igt_require(display_ver >= 9);
 	}
 
-	output = igt_get_single_output_for_pipe(&data->display, crtc->pipe);
-	igt_require(output);
+	crtc = igt_first_crtc_with_single_output(display, &output);
+	igt_require(crtc);
 
 	igt_output_set_crtc(output, crtc);
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);

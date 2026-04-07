@@ -100,7 +100,7 @@ static bool check_support(data_t *data)
 	case FEATURE_NONE:
 		return true;
 	case FEATURE_FBC:
-		if (!intel_fbc_supported_on_chipset(data->drm_fd, data->crtc->pipe)) {
+		if (!intel_fbc_supported(data->crtc)) {
 			igt_info("FBC is not supported on this chipset\n");
 			return false;
 		}
@@ -168,8 +168,7 @@ static void check_feature_enabled(data_t *data)
 	case FEATURE_NONE:
 		break;
 	case FEATURE_FBC:
-		igt_assert_f(intel_fbc_wait_until_enabled(data->drm_fd,
-							  data->crtc->pipe),
+		igt_assert_f(intel_fbc_wait_until_enabled(data->crtc),
 			     "FBC still disabled\n");
 		break;
 	case FEATURE_PSR:
@@ -194,8 +193,7 @@ static void check_feature(data_t *data)
 	case FEATURE_NONE:
 		break;
 	case FEATURE_FBC:
-		igt_assert_f(intel_fbc_wait_until_enabled(data->drm_fd,
-							  data->crtc->pipe),
+		igt_assert_f(intel_fbc_wait_until_enabled(data->crtc),
 			     "FBC disabled\n");
 		/* TODO: Add compression check here */
 		break;
@@ -379,8 +377,8 @@ int igt_main()
 
 				data.crtc = crtc;
 
-				for_each_valid_output_on_pipe(&data.display,
-							      crtc->pipe,
+				for_each_valid_output_on_crtc(&data.display,
+							      crtc,
 							      data.output) {
 					data.mode = igt_output_get_mode(data.output);
 
