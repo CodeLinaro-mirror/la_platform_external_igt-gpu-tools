@@ -160,9 +160,9 @@ static igt_output_t *kms_writeback_get_output(igt_display_t *display, __u32 four
 					    crtc);
 
 			if (check_writeback_config(display, output, override_mode, fourcc_in, fourcc_out)) {
-				igt_debug("Using connector %u:%s on pipe %d\n",
+				igt_debug("Using connector %u:%s on pipe %s\n",
 					  output->config.connector->connector_id,
-					  output->name, crtc->pipe);
+					  output->name, igt_crtc_name(crtc));
 				return output;
 			}
 		}
@@ -308,7 +308,8 @@ static void check_plane_colorop_ids(igt_display_t *display)
 	GHashTable *id_set = g_hash_table_new(g_direct_hash, g_direct_equal);
 
 	for_each_crtc(display, crtc) {
-		for_each_plane_on_pipe(display, crtc->pipe, plane) {
+		for_each_plane_on_crtc(crtc,
+				       plane) {
 			/* Skip when a drm_plane is already scanned */
 			if (g_hash_table_contains(plane_set, GINT_TO_POINTER(plane->drm_plane->plane_id)))
 				continue;

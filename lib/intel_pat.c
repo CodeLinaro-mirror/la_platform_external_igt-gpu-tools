@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include "igt.h"
 #include "intel_pat.h"
+#include "xe/xe_query.h"
 
 /**
  * xe_get_pat_sw_config - Helper to read PAT (Page Attribute Table) software configuration
@@ -96,24 +97,27 @@ int32_t xe_get_pat_sw_config(int drm_fd, struct intel_pat_cache *xe_pat_cache)
 
 static void intel_get_pat_idx(int fd, struct intel_pat_cache *pat)
 {
-	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint16_t dev_id;
 
-	if (intel_graphics_ver(dev_id) == IP_VER(35, 11)) {
-		pat->uc = 3;
-		pat->wb = 2;
-		pat->max_index = 31;
-	} else if (intel_get_device_info(dev_id)->graphics_ver == 30 ||
-		   intel_get_device_info(dev_id)->graphics_ver == 20) {
-		pat->uc = 3;
-		pat->wt = 15; /* Compressed + WB-transient */
-		pat->wb = 2;
-		pat->uc_comp = 12; /* Compressed + UC, XE2 and later */
-		pat->max_index = 31;
+	/*
+	 * For Xe, use the PAT cache stored in struct xe_device.
+	 * xe_device_get() populates the cache while still root; forked
+	 * children that inherit the xe_device can use it post-drop_root().
+	 */
+	if (is_xe_device(fd)) {
+		struct xe_device *xe_dev = xe_device_get(fd);
 
-		/* Wa_16023588340: CLOS3 entries at end of table are unusable */
-		if (intel_graphics_ver(dev_id) == IP_VER(20, 1))
-			pat->max_index -= 4;
-	} else if (IS_METEORLAKE(dev_id)) {
+		igt_assert_f(xe_dev->pat_cache,
+			     "PAT sw_config not available -- "
+			     "debugfs not accessible (missing root or not mounted?)\n");
+		*pat = *xe_dev->pat_cache;
+		return;
+	}
+
+	/* i915 fallback: hardcoded PAT indices */
+	dev_id = intel_get_drm_devid(fd);
+
+	if (IS_METEORLAKE(dev_id)) {
 		pat->uc = 2;
 		pat->wt = 1;
 		pat->wb = 3;

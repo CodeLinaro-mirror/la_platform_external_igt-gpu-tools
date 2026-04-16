@@ -122,9 +122,8 @@ set_fb_and_collect_crc(data_t *data, igt_plane_t *plane, struct igt_fb *fb,
 	igt_pipe_crc_start(data->pipe_crc);
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, crc);
 	igt_pipe_crc_stop(data->pipe_crc);
-	igt_assert_f(intel_fbc_is_enabled(data->drm_fd, data->crtc->pipe,
-					  IGT_LOG_INFO),
-					  "FBC is not enabled\n");
+	igt_assert_f(intel_fbc_is_enabled(data->crtc, IGT_LOG_INFO),
+		     "FBC is not enabled\n");
 }
 
 static void
@@ -412,7 +411,7 @@ static bool prepare_test(data_t *data)
 	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	igt_require_f(intel_fbc_supported_on_chipset(data->drm_fd, data->crtc->pipe),
+	igt_require_f(intel_fbc_supported(data->crtc),
 		      "FBC not supported by the chipset on pipe\n");
 
 	if (psr_sink_support(data->drm_fd, data->debugfs_fd, PSR_MODE_1, NULL) ||
@@ -463,8 +462,9 @@ int igt_main()
 			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display,
-						      crtc->pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				data.format = DRM_FORMAT_XRGB8888;
 
 				igt_dynamic_f("pipe-%s-%s",
@@ -488,8 +488,9 @@ int igt_main()
 			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display,
-						      crtc->pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				data.format = DRM_FORMAT_XRGB8888;
 
 				igt_dynamic_f("pipe-%s-%s",
@@ -515,8 +516,9 @@ int igt_main()
 			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display,
-						      crtc->pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				for (int i = 0; i < num_formats; i++) {
 					/* on simulation platforms , limit to single format */
 					if (data.is_simulation && i > 0)
