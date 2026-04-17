@@ -97,7 +97,7 @@ typedef struct {
 	igt_display_t display;
 	struct igt_fb primary_fb;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	unsigned int flags;
 #define IDLE	0x1
 #define BUSY	0x2
@@ -110,8 +110,8 @@ typedef struct {
 } data_t;
 
 static bool all_pipes;
-static enum pipe active_pipes[IGT_MAX_PIPES];
-static uint32_t last_pipe;
+static int active_crtcs[IGT_MAX_PIPES];
+static uint32_t last_crtc_index;
 
 static double elapsed(const struct timespec *start,
 		      const struct timespec *end,
@@ -129,7 +129,8 @@ static void prepare_crtc(data_t *data, int fd, igt_output_t *output)
 	igt_display_reset(display);
 
 	/* select the pipe we want to use */
-	igt_output_set_pipe(output, data->pipe);
+	igt_output_set_crtc(output,
+			    data->crtc);
 
 	/* create and set the primary plane fb */
 	mode = igt_output_get_mode(output);
@@ -143,13 +144,12 @@ static void prepare_crtc(data_t *data, int fd, igt_output_t *output)
 
 	igt_display_commit(display);
 
-	igt_wait_for_vblank(fd,
-			display->pipes[data->pipe].crtc_offset);
+	igt_wait_for_vblank(data->crtc);
 }
 
 static void cleanup_crtc(data_t *data, int fd, igt_output_t *output)
 {
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit(&data->display);
 	igt_remove_fb(fd, &data->primary_fb);
 }
@@ -192,7 +192,7 @@ static void run_test(data_t *data, void (*testfunc)(data_t *, int, int))
 		memset(&vbl, 0, sizeof(vbl));
 		vbl.request.type =
 			DRM_VBLANK_RELATIVE | DRM_VBLANK_EVENT;
-		vbl.request.type |= kmstest_get_vbl_flag(data->pipe);
+		vbl.request.type |= igt_crtc_get_vbl_flag(data->crtc);
 		vbl.request.sequence = 120 + 12;
 		igt_assert_eq(wait_vblank(fd, &vbl), 0);
 	}
@@ -225,17 +225,17 @@ static void run_test(data_t *data, void (*testfunc)(data_t *, int, int))
 }
 
 static bool
-pipe_output_combo_valid(igt_display_t *display,
-			enum pipe pipe, igt_output_t *output)
+crtc_output_combo_valid(igt_display_t *display, igt_crtc_t *crtc,
+			igt_output_t *output)
 {
 	bool ret = true;
 
 	igt_display_reset(display);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	if (!intel_pipe_output_combo_valid(display))
 		ret = false;
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 
 	return ret;
 }
@@ -243,15 +243,14 @@ pipe_output_combo_valid(igt_display_t *display,
 static void crtc_id_subtest(data_t *data, int fd)
 {
 	igt_display_t *display = &data->display;
-	enum pipe p = data->pipe;
 	igt_output_t *output = data->output;
 	struct drm_event_vblank buf;
-	const uint32_t pipe_id_flag = kmstest_get_vbl_flag(p);
+	const uint32_t pipe_id_flag = igt_crtc_get_vbl_flag(data->crtc);
 	unsigned crtc_id, expected_crtc_id;
 	uint64_t val;
 	union drm_wait_vblank vbl;
 
-	crtc_id = display->pipes[p].crtc_id;
+	crtc_id = data->crtc->crtc_id;
 	if (drmGetCap(display->drm_fd, DRM_CAP_CRTC_IN_VBLANK_EVENT, &val) == 0)
 		expected_crtc_id = crtc_id;
 	else
@@ -291,7 +290,7 @@ static void crtc_id_subtest(data_t *data, int fd)
 
 static void accuracy(data_t *data, int fd, int nchildren)
 {
-	const uint32_t pipe_id_flag = kmstest_get_vbl_flag(data->pipe);
+	const uint32_t pipe_id_flag = igt_crtc_get_vbl_flag(data->crtc);
 	union drm_wait_vblank vbl;
 	unsigned long target;
 	int total = 120 / nchildren;
@@ -330,7 +329,7 @@ static void accuracy(data_t *data, int fd, int nchildren)
 
 static void vblank_query(data_t *data, int fd, int nchildren)
 {
-	const uint32_t pipe_id_flag = kmstest_get_vbl_flag(data->pipe);
+	const uint32_t pipe_id_flag = igt_crtc_get_vbl_flag(data->crtc);
 	union drm_wait_vblank vbl;
 	struct timespec start, end;
 	unsigned long sq, count = 0;
@@ -359,7 +358,7 @@ static void vblank_query(data_t *data, int fd, int nchildren)
 
 static void vblank_wait(data_t *data, int fd, int nchildren)
 {
-	const uint32_t pipe_id_flag = kmstest_get_vbl_flag(data->pipe);
+	const uint32_t pipe_id_flag = igt_crtc_get_vbl_flag(data->crtc);
 	union drm_wait_vblank vbl;
 	struct timespec start, end;
 	unsigned long sq, count = 0;
@@ -388,12 +387,12 @@ static void vblank_wait(data_t *data, int fd, int nchildren)
 		 elapsed(&start, &end, count));
 }
 
-static int get_vblank(int fd, enum pipe pipe, unsigned flags)
+static int get_vblank(int fd, igt_crtc_t *crtc, unsigned flags)
 {
 	union drm_wait_vblank vbl;
 
 	memset(&vbl, 0, sizeof(vbl));
-	vbl.request.type = DRM_VBLANK_RELATIVE | kmstest_get_vbl_flag(pipe) | flags;
+	vbl.request.type = DRM_VBLANK_RELATIVE | igt_crtc_get_vbl_flag(crtc) | flags;
 	do_or_die(igt_ioctl(fd, DRM_IOCTL_WAIT_VBLANK, &vbl));
 
 	return vbl.reply.sequence;
@@ -412,7 +411,7 @@ static void vblank_ts_cont(data_t *data, int fd, int nchildren)
 	int vrefresh = igt_output_get_mode(output)->vrefresh;
 	double time_elapsed;
 
-	seq1 = get_vblank(fd, data->pipe, 0);
+	seq1 = get_vblank(fd, data->crtc, 0);
 	clock_gettime(CLOCK_MONOTONIC, &start);
 
 	if (data->flags & DPMS) {
@@ -421,7 +420,7 @@ static void vblank_ts_cont(data_t *data, int fd, int nchildren)
 	}
 
 	if (data->flags & MODESET) {
-		igt_output_set_pipe(output, PIPE_NONE);
+		igt_output_set_crtc(output, NULL);
 		igt_display_commit2(display, display->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 	}
 
@@ -436,7 +435,7 @@ static void vblank_ts_cont(data_t *data, int fd, int nchildren)
 		/* Attempting to do a vblank while disabled should return -EINVAL */
 		memset(&vbl, 0, sizeof(vbl));
 		vbl.request.type = _DRM_VBLANK_RELATIVE;
-		vbl.request.type |= kmstest_get_vbl_flag(data->pipe);
+		vbl.request.type |= igt_crtc_get_vbl_flag(data->crtc);
 		igt_assert_eq(wait_vblank(fd, &vbl), -EINVAL);
 	}
 
@@ -446,11 +445,12 @@ static void vblank_ts_cont(data_t *data, int fd, int nchildren)
 	}
 
 	if (data->flags & MODESET) {
-		igt_output_set_pipe(output, data->pipe);
+		igt_output_set_crtc(output,
+				    data->crtc);
 		igt_display_commit2(display, display->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 	}
 
-	seq2 = get_vblank(fd, data->pipe, 0);
+	seq2 = get_vblank(fd, data->crtc, 0);
 	clock_gettime(CLOCK_MONOTONIC, &end);
 
 	time_elapsed = igt_time_elapsed(&start, &end);
@@ -475,6 +475,7 @@ static void vblank_ts_cont(data_t *data, int fd, int nchildren)
 
 static void run_subtests(data_t *data)
 {
+	igt_crtc_t *crtc;
 	const struct {
 		const char *name;
 		void (*func)(data_t *, int, int);
@@ -514,17 +515,23 @@ static void run_subtests(data_t *data)
 
 			igt_describe("Check if test run while hanging by introducing NOHANG flag.");
 			igt_subtest_with_dynamic_f("%s-%s", f->name, m->name) {
-				for_each_pipe_with_valid_output(&data->display, data->pipe, data->output) {
-					if (!pipe_output_combo_valid(&data->display, data->pipe, data->output))
+				for_each_crtc_with_valid_output(&data->display,
+								crtc,
+								data->output) {
+					data->crtc = crtc;
+					if (!crtc_output_combo_valid(&data->display, crtc, data->output))
 						continue;
 
-					if (!all_pipes && data->pipe != active_pipes[0] &&
-					    data->pipe != active_pipes[last_pipe]) {
-						igt_info("Skipping pipe %s\n", kmstest_pipe_name(data->pipe));
+					if (!all_pipes && crtc->crtc_index != active_crtcs[0] &&
+					    crtc->crtc_index != active_crtcs[last_crtc_index]) {
+						igt_info("Skipping pipe %s\n",
+							 igt_crtc_name(crtc));
 						continue;
 					}
 
-					igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(data->pipe), data->output->name) {
+					igt_dynamic_f("pipe-%s-%s",
+						      igt_crtc_name(crtc),
+						      data->output->name) {
 						data->flags = m->flags | NOHANG;
 						run_test(data, f->func);
 					}
@@ -540,17 +547,23 @@ static void run_subtests(data_t *data)
 				igt_hang_t hang;
 
 				hang = igt_allow_hang(data->display.drm_fd, 0, 0);
-				for_each_pipe_with_valid_output(&data->display, data->pipe, data->output) {
-					if (!pipe_output_combo_valid(&data->display, data->pipe, data->output))
+				for_each_crtc_with_valid_output(&data->display,
+								crtc,
+								data->output) {
+					data->crtc = crtc;
+					if (!crtc_output_combo_valid(&data->display, crtc, data->output))
 						continue;
 
-					if (!all_pipes && data->pipe != active_pipes[0] &&
-					    data->pipe != active_pipes[last_pipe]) {
-						igt_info("Skipping pipe %s\n", kmstest_pipe_name(data->pipe));
+					if (!all_pipes && crtc->crtc_index != active_crtcs[0] &&
+					    crtc->crtc_index != active_crtcs[last_crtc_index]) {
+						igt_info("Skipping pipe %s\n",
+							 igt_crtc_name(crtc));
 						continue;
 					}
 
-					igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(data->pipe), data->output->name) {
+					igt_dynamic_f("pipe-%s-%s",
+						      igt_crtc_name(crtc),
+						      data->output->name) {
 						data->flags = m->flags;
 						run_test(data, f->func);
 					}
@@ -624,6 +637,7 @@ const char *help_str =
 
 int igt_main_args("e", NULL, help_str, opt_handler, NULL)
 {
+	igt_crtc_t *crtc;
 	int fd;
 	data_t data;
 
@@ -634,18 +648,23 @@ int igt_main_args("e", NULL, help_str, opt_handler, NULL)
 		igt_display_require_output(&data.display);
 
 		/* Get active pipes. */
-		for_each_pipe(&data.display, data.pipe)
-			active_pipes[last_pipe++] = data.pipe;
-		last_pipe--;
+		for_each_crtc(&data.display, crtc) {
+			data.crtc = crtc;
+			active_crtcs[last_crtc_index++] = crtc->crtc_index;
+		}
+		last_crtc_index--;
 	}
 
 	igt_describe("Negative test for vblank request.");
 	igt_subtest_with_dynamic("invalid") {
-		for_each_pipe_with_valid_output(&data.display, data.pipe, data.output) {
-			if (!pipe_output_combo_valid(&data.display, data.pipe, data.output))
+		for_each_crtc_with_valid_output(&data.display, crtc,
+						data.output) {
+			data.crtc = crtc;
+			if (!crtc_output_combo_valid(&data.display, crtc, data.output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(data.pipe), data.output->name)
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      data.output->name)
 				invalid_subtest(&data, fd);
 			/* one pipe/output combination is enough */
 				break;
@@ -654,17 +673,21 @@ int igt_main_args("e", NULL, help_str, opt_handler, NULL)
 
 	igt_describe("Check the vblank and flip events works with given crtc id.");
 	igt_subtest_with_dynamic("crtc-id") {
-		for_each_pipe_with_valid_output(&data.display, data.pipe, data.output) {
-			if (!pipe_output_combo_valid(&data.display, data.pipe, data.output))
+		for_each_crtc_with_valid_output(&data.display, crtc,
+						data.output) {
+			data.crtc = crtc;
+			if (!crtc_output_combo_valid(&data.display, crtc, data.output))
 				continue;
 
-			if (!all_pipes && data.pipe != active_pipes[0] &&
-					  data.pipe != active_pipes[last_pipe]) {
-				igt_info("Skipping pipe %s\n", kmstest_pipe_name(data.pipe));
+			if (!all_pipes && crtc->crtc_index != active_crtcs[0] &&
+					  crtc->crtc_index != active_crtcs[last_crtc_index]) {
+				igt_info("Skipping pipe %s\n",
+					 igt_crtc_name(crtc));
 				continue;
 			}
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(data.pipe), data.output->name)
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      data.output->name)
 				crtc_id_subtest(&data, fd);
 		}
 	}

@@ -60,7 +60,7 @@ typedef struct {
 	drmModeModeInfo *mode;
 	igt_output_t *output;
 	igt_pipe_crc_t *pipe_crc;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	u32 format;
 
 	struct igt_fb fb[N_FBS];
@@ -122,9 +122,8 @@ set_fb_and_collect_crc(data_t *data, igt_plane_t *plane, struct igt_fb *fb,
 	igt_pipe_crc_start(data->pipe_crc);
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, crc);
 	igt_pipe_crc_stop(data->pipe_crc);
-	igt_assert_f(intel_fbc_is_enabled(data->drm_fd, data->pipe,
-					  IGT_LOG_INFO),
-					  "FBC is not enabled\n");
+	igt_assert_f(intel_fbc_is_enabled(data->crtc, IGT_LOG_INFO),
+		     "FBC is not enabled\n");
 }
 
 static void
@@ -397,7 +396,7 @@ static void cleanup(data_t *data)
 
 	igt_pipe_crc_free(data->pipe_crc);
 
-	igt_output_set_pipe(data->output, PIPE_NONE);
+	igt_output_set_crtc(data->output, NULL);
 
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 }
@@ -407,11 +406,12 @@ static bool prepare_test(data_t *data)
 	igt_display_reset(&data->display);
 
 	data->mode = igt_output_get_mode(data->output);
-	igt_output_set_pipe(data->output, data->pipe);
-	data->pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe,
+	igt_output_set_crtc(data->output,
+			    data->crtc);
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	igt_require_f(intel_fbc_supported_on_chipset(data->drm_fd, data->pipe),
+	igt_require_f(intel_fbc_supported(data->crtc),
 		      "FBC not supported by the chipset on pipe\n");
 
 	if (psr_sink_support(data->drm_fd, data->debugfs_fd, PSR_MODE_1, NULL) ||
@@ -438,6 +438,7 @@ static void fbc_dirty_rectangle_test(data_t *data, void (*test_func)(data_t *))
 
 int igt_main()
 {
+	igt_crtc_t *crtc;
 	data_t data = {0};
 
 	igt_fixture() {
@@ -457,14 +458,17 @@ int igt_main()
 		bool single_pipe = false;
 		data.feature = FEATURE_FBC;
 
-		for_each_pipe(&data.display, data.pipe) {
+		for_each_crtc(&data.display, crtc) {
+			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display, data.pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				data.format = DRM_FORMAT_XRGB8888;
 
 				igt_dynamic_f("pipe-%s-%s",
-					       kmstest_pipe_name(data.pipe),
+					       igt_crtc_name(crtc),
 					       igt_output_name(data.output)) {
 					fbc_dirty_rectangle_test(&data,
 						fbc_dirty_rectangle_outside_visible_region);
@@ -480,14 +484,17 @@ int igt_main()
 		bool single_pipe = false;
 		data.feature = FEATURE_FBC;
 
-		for_each_pipe(&data.display, data.pipe) {
+		for_each_crtc(&data.display, crtc) {
+			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display, data.pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				data.format = DRM_FORMAT_XRGB8888;
 
 				igt_dynamic_f("pipe-%s-%s",
-					       kmstest_pipe_name(data.pipe),
+					       igt_crtc_name(crtc),
 					       igt_output_name(data.output)) {
 					fbc_dirty_rectangle_test(&data,
 							fbc_dirty_rectangle_dirtyfb);
@@ -505,17 +512,20 @@ int igt_main()
 		bool single_pipe = false;
 		data.feature = FEATURE_FBC;
 
-		for_each_pipe(&data.display, data.pipe) {
+		for_each_crtc(&data.display, crtc) {
+			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display, data.pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				for (int i = 0; i < num_formats; i++) {
 					/* on simulation platforms , limit to single format */
 					if (data.is_simulation && i > 0)
 						break;
 
 					igt_dynamic_f("pipe-%s-%s-format-%s",
-						       kmstest_pipe_name(data.pipe),
+						       igt_crtc_name(crtc),
 						       igt_output_name(data.output),
 						       igt_format_str(formats[i])) {
 						data.format = formats[i];

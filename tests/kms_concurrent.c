@@ -67,7 +67,7 @@ struct {
 /*
  * Common code across all tests, acting on data_t
  */
-static void test_init(data_t *data, enum pipe pipe, int n_planes,
+static void test_init(data_t *data, int n_planes,
 		      igt_output_t *output)
 {
 	data->plane = calloc(n_planes, sizeof(*data->plane));
@@ -77,7 +77,7 @@ static void test_init(data_t *data, enum pipe pipe, int n_planes,
 	igt_assert_f(data->fb != NULL, "Failed to allocate memory for FBs\n");
 }
 
-static void test_fini(data_t *data, enum pipe pipe, int n_planes,
+static void test_fini(data_t *data, int n_planes,
 		      igt_output_t *output)
 {
 	int i;
@@ -97,7 +97,7 @@ static void test_fini(data_t *data, enum pipe pipe, int n_planes,
 	}
 
 	/* reset the constraint on the pipe */
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(&data->display, data->display.is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 
 	free(data->plane);
@@ -154,11 +154,10 @@ create_fb_for_mode_position(data_t *data, drmModeModeInfo *mode,
 }
 
 static void
-prepare_planes(data_t *data, enum pipe pipe, int max_planes,
+prepare_planes(data_t *data, igt_crtc_t *crtc, int max_planes,
 	       igt_output_t *output)
 {
 	drmModeModeInfo *mode;
-	igt_pipe_t *p;
 	igt_plane_t *primary;
 	int *x;
 	int *y;
@@ -166,19 +165,21 @@ prepare_planes(data_t *data, enum pipe pipe, int max_planes,
 	int i;
 	int format, modifier;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
-	p = primary->pipe;
 
-	x = malloc(p->n_planes * sizeof(*x));
-	igt_assert_f(x, "Failed to allocate %ld bytes for variable x\n", (long int) (p->n_planes * sizeof(*x)));
+	x = malloc(crtc->n_planes * sizeof(*x));
+	igt_assert_f(x, "Failed to allocate %ld bytes for variable x\n",
+		     (long int) (crtc->n_planes * sizeof(*x)));
 
-	y = malloc(p->n_planes * sizeof(*y));
-	igt_assert_f(y, "Failed to allocate %ld bytes for variable y\n", (long int) (p->n_planes * sizeof(*y)));
+	y = malloc(crtc->n_planes * sizeof(*y));
+	igt_assert_f(y, "Failed to allocate %ld bytes for variable y\n",
+		     (long int) (crtc->n_planes * sizeof(*y)));
 
-	size = malloc(p->n_planes * sizeof(*size));
-	igt_assert_f(size, "Failed to allocate %ld bytes for variable size\n", (long int) (p->n_planes * sizeof(*size)));
+	size = malloc(crtc->n_planes * sizeof(*size));
+	igt_assert_f(size, "Failed to allocate %ld bytes for variable size\n",
+		     (long int) (crtc->n_planes * sizeof(*size)));
 
 	mode = igt_output_get_mode(output);
 
@@ -225,7 +226,8 @@ prepare_planes(data_t *data, enum pipe pipe, int max_planes,
 }
 
 static void
-test_plane_position_with_output(data_t *data, enum pipe pipe, int max_planes,
+test_plane_position_with_output(data_t *data, igt_crtc_t *crtc,
+				int max_planes,
 				igt_output_t *output)
 {
 	int i;
@@ -233,11 +235,12 @@ test_plane_position_with_output(data_t *data, enum pipe pipe, int max_planes,
 	bool loop_forever = opt.iterations == LOOP_FOREVER ? true : false;
 	int ret;
 
-	igt_pipe_refresh(&data->display, pipe, true);
+	igt_crtc_refresh(crtc, true);
 
 	i = 0;
 	while (i < iterations || loop_forever) {
-		prepare_planes(data, pipe, max_planes, output);
+		prepare_planes(data, crtc,
+			       max_planes, output);
 		ret = igt_display_try_commit2(&data->display, COMMIT_ATOMIC);
 
 		for (int c = 0; c < max_planes; c++)
@@ -272,7 +275,8 @@ get_lowres_mode(data_t *data, const drmModeModeInfo *mode_default,
 }
 
 static void
-test_resolution_with_output(data_t *data, enum pipe pipe, int max_planes, igt_output_t *output)
+test_resolution_with_output(data_t *data, igt_crtc_t *crtc, int max_planes,
+			    igt_output_t *output)
 {
 	int iterations = opt.iterations < 1 ? max_planes : opt.iterations;
 	bool loop_forever = opt.iterations == LOOP_FOREVER ? true : false;
@@ -283,7 +287,8 @@ test_resolution_with_output(data_t *data, enum pipe pipe, int max_planes, igt_ou
 		const drmModeModeInfo *mode_hi;
 		drmModeModeInfo *mode_lo;
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output,
+				    crtc);
 
 		mode_hi = igt_output_get_mode(output);
 		mode_lo = get_lowres_mode(data, mode_hi, output);
@@ -292,7 +297,7 @@ test_resolution_with_output(data_t *data, enum pipe pipe, int max_planes, igt_ou
 		igt_output_override_mode(output, mode_lo);
 		free(mode_lo);
 		if (is_amdgpu_device(data->drm_fd))
-			igt_output_set_pipe(output, PIPE_NONE);
+			igt_output_set_crtc(output, NULL);
 		igt_display_commit2(&data->display, COMMIT_ATOMIC);
 
 		/* switch back to higher resolution */
@@ -304,51 +309,60 @@ test_resolution_with_output(data_t *data, enum pipe pipe, int max_planes, igt_ou
 }
 
 static void
-run_test(data_t *data, enum pipe pipe, igt_output_t *output)
+run_test(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
-	int n_planes = data->display.pipes[pipe].n_planes;
+	int n_planes = crtc->n_planes;
 	igt_display_reset(&data->display);
 
 	if (!opt.user_seed)
 		opt.seed = time(NULL);
 
 	igt_info("Testing resolution with connector %s using pipe %s with seed %d\n",
-		 igt_output_name(output), kmstest_pipe_name(pipe), opt.seed);
+		 igt_output_name(output), igt_crtc_name(crtc), opt.seed);
 
 	srand(opt.seed);
 
-	test_init(data, pipe, n_planes, output);
+	test_init(data, n_planes, output);
 
 	igt_fork(child, 1) {
-		test_plane_position_with_output(data, pipe, n_planes, output);
+		test_plane_position_with_output(data,
+						crtc,
+						n_planes,
+						output);
 	}
 
-	test_resolution_with_output(data, pipe, n_planes, output);
+	test_resolution_with_output(data,
+				    crtc,
+				    n_planes, output);
 
 	igt_waitchildren();
 
-	test_fini(data, pipe, n_planes, output);
+	test_fini(data, n_planes, output);
 }
 
 static void
 run_tests_for_pipe(data_t *data)
 {
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
 	igt_describe("Test atomic mode setting concurrently with multiple planes and screen "
 		     "resolution.");
 	igt_subtest_with_dynamic("multi-plane-atomic-lowres") {
-		for_each_valid_output_on_pipe(&data->display, pipe, output) {
+		for_each_crtc_with_valid_output(&data->display, crtc, output) {
 			igt_display_reset(&data->display);
 
-			igt_output_set_pipe(output, pipe);
+			igt_output_set_crtc(output,
+					    crtc);
 			if (!intel_pipe_output_combo_valid(&data->display))
 				continue;
 
-			igt_require(data->display.pipes[pipe].n_planes > 0);
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_test(data, pipe, output);
+			igt_require(crtc->n_planes > 0);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_test(data,
+					 crtc,
+					 output);
 		}
 	}
 }

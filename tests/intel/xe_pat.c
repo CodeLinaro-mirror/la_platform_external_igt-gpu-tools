@@ -14,11 +14,19 @@
 #include <fcntl.h>
 
 #include "igt.h"
+#include "igt_configfs.h"
+#include "igt_device.h"
+#include "igt_fs.h"
+#include "igt_kmod.h"
+#include "igt_syncobj.h"
+#include "igt_sysfs.h"
 #include "igt_vgem.h"
 #include "intel_blt.h"
 #include "intel_mocs.h"
 #include "intel_pat.h"
+#include "linux_scaffold.h"
 
+#include "xe/xe_gt.h"
 #include "xe/xe_ioctl.h"
 #include "xe/xe_query.h"
 #include "xe/xe_util.h"
@@ -27,6 +35,8 @@
 #define XE_COH_AT_LEAST_1WAY 2
 
 static bool do_slow_check;
+static char bus_addr[NAME_MAX];
+static struct pci_device *pci_dev;
 
 static uint32_t create_object(int fd, int r, int size, uint16_t coh_mode,
 			      bool force_cpu_wc);
@@ -76,6 +86,147 @@ static void userptr_coh_none(int fd)
 	munmap(data, size);
 	xe_vm_destroy(fd, vm);
 }
+#define REG_FIELD_GET(__mask, __val) \
+	((uint32_t)FIELD_GET(__mask, __val))
+
+#define XE2_NO_PROMOTE	REG_BIT(10)
+#define XE2_COMP_EN	REG_BIT(9)
+#define XE2_L3_CLOS	GENMASK(7, 6)
+#define XE2_L3_POLICY	GENMASK(5, 4)
+#define XE2_L4_POLICY	GENMASK(3, 2)
+#define XE2_COH_MODE	GENMASK(1, 0)
+
+#define L3_CLOS1		1
+#define L3_CLOS2		2
+#define L3_CLOS3		3
+
+#define L3_CACHE_POLICY_WB	0
+#define L3_CACHE_POLICY_XD	1
+#define L3_CACHE_POLICY_UC	3
+
+#define L4_CACHE_POLICY_WB	0
+#define L4_CACHE_POLICY_WT	1
+#define L4_CACHE_POLICY_UC	3
+
+#define COH_MODE_NONE	  	0
+#define COH_MODE_1WAY		2
+#define COH_MODE_2WAY		3
+
+/* Pre-Xe2 PAT bit fields (from kernel xe_pat.c) */
+#define XELP_MEM_TYPE_MASK	GENMASK(1, 0)
+
+static bool pat_entry_is_uc(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver >= IP_VER(20, 0))
+		return REG_FIELD_GET(XE2_L3_POLICY, pat) == L3_CACHE_POLICY_UC &&
+		       REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_UC;
+
+	if (gfx_ver >= IP_VER(12, 70))
+		return REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_UC;
+
+	return REG_FIELD_GET(XELP_MEM_TYPE_MASK, pat) == 0;
+}
+
+static bool pat_entry_is_wb(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver >= IP_VER(20, 0)) {
+		uint32_t l3 = REG_FIELD_GET(XE2_L3_POLICY, pat);
+
+		return l3 == L3_CACHE_POLICY_WB || l3 == L3_CACHE_POLICY_XD;
+	}
+
+	if (gfx_ver >= IP_VER(12, 70))
+		return REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WB;
+
+	return REG_FIELD_GET(XELP_MEM_TYPE_MASK, pat) == 3;
+}
+
+static bool pat_entry_is_wt(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver >= IP_VER(20, 0))
+		return REG_FIELD_GET(XE2_L3_POLICY, pat) == L3_CACHE_POLICY_XD &&
+		       REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WT;
+
+	if (gfx_ver >= IP_VER(12, 70))
+		return REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WT;
+
+	return REG_FIELD_GET(XELP_MEM_TYPE_MASK, pat) == 2;
+}
+
+static bool pat_entry_is_compressed(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver < IP_VER(20, 0))
+		return false;
+
+	return !!(pat & XE2_COMP_EN);
+}
+
+static int xe_fetch_pat_sw_config(int fd, struct intel_pat_cache *pat_sw_config)
+{
+	int32_t parsed = xe_get_pat_sw_config(fd, pat_sw_config);
+
+	igt_assert_f(parsed > 0, "Couldn't get Xe PAT software configuration\n");
+
+	return parsed;
+}
+
+/**
+ * SUBTEST: pat-sanity
+ * Test category: functionality test
+ * Description: Test debugfs PAT config vs getters
+ */
+static void pat_sanity(int fd)
+{
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	unsigned int gfx_ver = intel_graphics_ver(dev_id);
+	struct intel_pat_cache pat_sw_config = {};
+	int32_t parsed;
+	bool has_uc_comp = false, has_wt = false;
+
+	parsed = xe_fetch_pat_sw_config(fd, &pat_sw_config);
+
+	if (gfx_ver >= IP_VER(20, 0)) {
+		for (int i = 0; i < parsed; i++) {
+			uint32_t pat = pat_sw_config.entries[i].pat;
+			if (pat_sw_config.entries[i].rsvd)
+				continue;
+			if (!!(pat & XE2_COMP_EN) &&
+			    REG_FIELD_GET(XE2_L3_POLICY, pat) == L3_CACHE_POLICY_UC &&
+			    REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_UC) {
+				has_uc_comp = true;
+			}
+			if (REG_FIELD_GET(XE2_L3_POLICY, pat) == L3_CACHE_POLICY_XD &&
+			    REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WT) {
+				has_wt = true;
+			}
+		}
+	} else {
+		has_wt = true;
+	}
+
+	/*
+	 * Validate that the selected PAT indices actually have the expected
+	 * cache types rather than comparing against hardcoded values.
+	 */
+	igt_assert_f(pat_entry_is_uc(gfx_ver, pat_sw_config.entries[pat_sw_config.uc].pat),
+		     "UC index %d does not point to an uncached entry (pat=%#x)\n",
+		     pat_sw_config.uc, pat_sw_config.entries[pat_sw_config.uc].pat);
+	igt_assert_f(pat_entry_is_wb(gfx_ver, pat_sw_config.entries[pat_sw_config.wb].pat),
+		     "WB index %d does not point to a WB/XA/XD entry (pat=%#x)\n",
+		     pat_sw_config.wb, pat_sw_config.entries[pat_sw_config.wb].pat);
+	if (has_wt)
+		igt_assert_f(pat_entry_is_wt(gfx_ver, pat_sw_config.entries[pat_sw_config.wt].pat),
+			     "WT index %d does not point to a WT entry (pat=%#x)\n",
+			     pat_sw_config.wt, pat_sw_config.entries[pat_sw_config.wt].pat);
+	if (has_uc_comp) {
+		uint32_t uc_comp_pat = pat_sw_config.entries[pat_sw_config.uc_comp].pat;
+
+		igt_assert_f(pat_entry_is_compressed(gfx_ver, uc_comp_pat) &&
+			     pat_entry_is_uc(gfx_ver, uc_comp_pat),
+			     "UC_COMP index %d does not point to a compressed UC entry (pat=%#x)\n",
+			     pat_sw_config.uc_comp, uc_comp_pat);
+	}
+}
 
 /**
  * SUBTEST: pat-index-all
@@ -84,8 +235,8 @@ static void userptr_coh_none(int fd)
  */
 static void pat_index_all(int fd)
 {
-	uint16_t dev_id = intel_get_drm_devid(fd);
 	size_t size = xe_get_default_alignment(fd);
+	struct intel_pat_cache pat_sw_config = {};
 	uint32_t vm, bo;
 	uint8_t pat_index;
 
@@ -114,10 +265,12 @@ static void pat_index_all(int fd)
 
 	igt_assert(intel_get_max_pat_index(fd));
 
+	xe_fetch_pat_sw_config(fd, &pat_sw_config);
+
 	for (pat_index = 0; pat_index <= intel_get_max_pat_index(fd);
 	     pat_index++) {
-		if (intel_get_device_info(dev_id)->graphics_ver >= 20 &&
-		    pat_index >= 16 && pat_index <= 19) { /* hw reserved */
+
+		if (pat_sw_config.entries[pat_index].rsvd) {
 			igt_assert_eq(__xe_vm_bind(fd, vm, 0, bo, 0, 0x40000,
 						   size, DRM_XE_VM_BIND_OP_MAP, 0, NULL, 0, 0,
 						   pat_index, 0),
@@ -259,9 +412,13 @@ static void pat_index_blt(struct xe_pat_param *p)
 	int bpp = 32;
 	uint32_t alias, name;
 	int fd = p->fd;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint8_t mocs_index;
 	int i;
 
 	igt_require(blt_has_fast_copy(fd));
+	mocs_index = intel_get_device_info(dev_id)->graphics_ver >= 20 ?
+		     intel_get_defer_to_pat_mocs_index(fd) : intel_get_uc_mocs_index(fd);
 
 	vm = xe_vm_create(fd, 0, 0);
 	exec_queue = xe_exec_queue_create(fd, vm, &inst, 0);
@@ -285,12 +442,12 @@ static void pat_index_blt(struct xe_pat_param *p)
 	blt_copy_init(fd, &blt);
 	blt.color_depth = CD_32bit;
 
-	blt_set_object(&src, p->r1_bo, size, p->r1, intel_get_uc_mocs_index(fd),
+	blt_set_object(&src, p->r1_bo, size, p->r1, mocs_index,
 		       p->r1_pat_index, T_LINEAR,
 		       COMPRESSION_DISABLED, COMPRESSION_TYPE_3D);
 	blt_set_geom(&src, stride, 0, 0, width, height, 0, 0);
 
-	blt_set_object(&dst, p->r2_bo, size, p->r2, intel_get_uc_mocs_index(fd),
+	blt_set_object(&dst, p->r2_bo, size, p->r2, mocs_index,
 		       p->r2_pat_index, T_LINEAR,
 		       COMPRESSION_DISABLED, COMPRESSION_TYPE_3D);
 	blt_set_geom(&dst, stride, 0, 0, width, height, 0, 0);
@@ -369,6 +526,8 @@ static void pat_index_blt(struct xe_pat_param *p)
 static void pat_index_render(struct xe_pat_param *p)
 {
 	int fd = p->fd;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint8_t mocs_index;
 	igt_render_copyfunc_t render_copy = NULL;
 	int size, stride, width = p->size->width, height = p->size->height;
 	struct intel_buf src, dst;
@@ -384,6 +543,9 @@ static void pat_index_render(struct xe_pat_param *p)
 	if (p->r2_compressed) /* XXX */
 		return;
 
+	mocs_index = intel_get_device_info(dev_id)->graphics_ver >= 20 ?
+		     intel_get_defer_to_pat_mocs_index(fd) : DEFAULT_MOCS_INDEX;
+
 	bops = buf_ops_create(fd);
 
 	ibb = intel_bb_create_full(fd, 0, 0, NULL, xe_get_default_alignment(fd),
@@ -396,11 +558,11 @@ static void pat_index_render(struct xe_pat_param *p)
 
 	intel_buf_init_full(bops, p->r1_bo, &src, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r1, p->r1_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r1, p->r1_pat_index, mocs_index);
 
 	intel_buf_init_full(bops, p->r2_bo, &dst, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r2, p->r2_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r2, p->r2_pat_index, mocs_index);
 
 	/* Ensure we always see zeroes for the initial KMD zeroing */
 	render_copy(ibb,
@@ -478,6 +640,8 @@ static void pat_index_render(struct xe_pat_param *p)
 static void pat_index_dw(struct xe_pat_param *p)
 {
 	int fd = p->fd;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint8_t mocs_index;
 	int size, stride, width = p->size->width, height = p->size->height;
 	struct drm_xe_engine_class_instance *hwe;
 	struct intel_bb *ibb;
@@ -500,6 +664,9 @@ static void pat_index_dw(struct xe_pat_param *p)
 			break;
 	}
 
+	mocs_index = intel_get_device_info(dev_id)->graphics_ver >= 20 ?
+		     intel_get_defer_to_pat_mocs_index(fd) : DEFAULT_MOCS_INDEX;
+
 	vm = xe_vm_create(fd, 0, 0);
 	ctx = xe_exec_queue_create(fd, vm, hwe, 0);
 
@@ -513,12 +680,13 @@ static void pat_index_dw(struct xe_pat_param *p)
 
 	intel_buf_init_full(bops, p->r1_bo, &r1_buf, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r1, p->r1_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r1, p->r1_pat_index, mocs_index);
 	intel_bb_add_intel_buf(ibb, &r1_buf, true);
 
 	intel_buf_init_full(bops, p->r2_bo, &r2_buf, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r2, p->r2_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r2, p->r2_pat_index, mocs_index);
+
 	intel_bb_add_intel_buf(ibb, &r2_buf, true);
 
 	/*
@@ -832,7 +1000,7 @@ static void display_vs_wb_transient(int fd)
 	struct buf_ops *bops;
 	struct igt_fb src_fb, dst_fb;
 	struct intel_buf src, dst;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	int bpp = 32;
 	int i;
 
@@ -849,15 +1017,17 @@ static void display_vs_wb_transient(int fd)
 	bops = buf_ops_create(fd);
 	ibb = intel_bb_create(fd, SZ_4K);
 
-	for_each_pipe_with_valid_output(&display, pipe, output) {
+	for_each_crtc_with_valid_output(&display, crtc, output) {
 		igt_display_reset(&display);
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output,
+				    crtc);
 		if (!intel_pipe_output_combo_valid(&display))
 			continue;
 
 		mode = igt_output_get_mode(output);
-		pipe_crc = igt_pipe_crc_new(fd, pipe, IGT_PIPE_CRC_SOURCE_AUTO);
+		pipe_crc = igt_crtc_crc_new(crtc,
+					    IGT_PIPE_CRC_SOURCE_AUTO);
 		break;
 	}
 
@@ -1022,6 +1192,11 @@ const struct pat_index_entry bmg_g21_pat_index_modes[] = {
 	{ NULL, 27, false, "c2-2way",     XE_COH_AT_LEAST_1WAY       },
 };
 
+const struct pat_index_entry xe3p_lpg_coherency_pat_index_modes[] = {
+	{ NULL, 18, false, "xa-l3-uc",	 XE_COH_NONE          },
+	{ NULL, 19, false, "xa-l3-1way", XE_COH_AT_LEAST_1WAY },
+};
+
 /*
  * Depending on 2M/1G GTT pages we might trigger different PTE layouts for the
  * PAT bits, so make sure we test with and without huge-pages. Also ensure we
@@ -1084,6 +1259,18 @@ static uint32_t create_object(int fd, int r, int size, uint16_t coh_mode,
  * SUBTEST: pat-index-xe2
  * Test category: functionality test
  * Description: Check some of the xe2 pat_index modes.
+ */
+
+/**
+ * SUBTEST: xa-app-transient-media-off
+ * Test category: functionality test
+ * Description: Check some of the xe4-lpg pat_index modes with media off.
+ */
+
+/**
+ * SUBTEST:  xa-app-transient-media-on
+ * Test category: functionality test
+ * Description: Check some of the xe3p-lpg pat_index modes with media on.
  */
 
 static void subtest_pat_index_modes_with_regions(int fd,
@@ -1195,6 +1382,260 @@ static void subtest_pat_index_modes_with_regions(int fd,
 	}
 }
 
+struct fs_pat_entry {
+	uint8_t pat_index;
+	const char *name;
+	uint16_t cpu_caching;
+	bool exp_result;
+};
+
+const struct fs_pat_entry fs_xe2_integrated[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, false },
+	{ 5, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, false },
+};
+
+const struct fs_pat_entry fs_xe2_discrete[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 5, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+const struct fs_pat_entry fs_xe3[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 5, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+const struct fs_pat_entry fs_xe3p_xpc[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 4, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+const struct fs_pat_entry fs_xe3p_lpg[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 18, "cpu-wc-gpu-xa-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 19, "cpu-wb-gpu-xa-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+#define CPUDW_INC   0x0
+#define GPUDW_WRITE 0x4
+#define GPUDW_READY 0x40
+#define READY_VAL   0xabcd
+#define FINISH_VAL  0x0bae
+
+static void __false_sharing(int fd, const struct fs_pat_entry *fs_entry)
+{
+	size_t size = xe_get_default_alignment(fd), bb_size;
+	uint32_t vm, exec_queue, bo, bb, *map, *batch;
+	struct drm_xe_engine_class_instance *hwe;
+	struct drm_xe_sync sync = {
+	    .type = DRM_XE_SYNC_TYPE_SYNCOBJ, .flags = DRM_XE_SYNC_FLAG_SIGNAL,
+	};
+	struct drm_xe_exec exec = {
+		.num_batch_buffer = 1,
+		.num_syncs = 1,
+		.syncs = to_user_pointer(&sync),
+	};
+	uint64_t addr = 0x40000;
+	uint64_t bb_addr = 0x100000;
+	uint32_t loops = 0x0, gpu_exp_value;
+	uint32_t region = system_memory(fd);
+	int loop_addr, i = 0;
+	int pat_index = fs_entry->pat_index;
+	int inc_idx, write_idx, ready_idx;
+	bool result;
+
+	inc_idx = CPUDW_INC / sizeof(*map);
+	write_idx = GPUDW_WRITE / sizeof(*map);
+	ready_idx = GPUDW_READY / sizeof(*map);
+
+	vm = xe_vm_create(fd, 0, 0);
+
+	bo = xe_bo_create_caching(fd, 0, size, region, 0, fs_entry->cpu_caching);
+	map = xe_bo_map(fd, bo, size);
+
+	bb_size = xe_bb_size(fd, SZ_4K);
+	bb = xe_bo_create(fd, 0, bb_size, region, 0);
+	batch = xe_bo_map(fd, bb, bb_size);
+
+	sync.handle = syncobj_create(fd, 0);
+	igt_assert_eq(__xe_vm_bind(fd, vm, 0, bo, 0, addr,
+				   size, DRM_XE_VM_BIND_OP_MAP, 0, &sync, 1, 0,
+				   pat_index, 0),
+			0);
+	igt_assert_eq(syncobj_wait_err(fd, &sync.handle, 1, INT64_MAX, 0), 0);
+
+	syncobj_reset(fd, &sync.handle, 1);
+	igt_assert_eq(__xe_vm_bind(fd, vm, 0, bb, 0, bb_addr,
+				   bb_size, DRM_XE_VM_BIND_OP_MAP, 0, &sync, 1, 0,
+				   DEFAULT_PAT_INDEX, 0),
+			0);
+	igt_assert_eq(syncobj_wait_err(fd, &sync.handle, 1, INT64_MAX, 0), 0);
+
+	/* Unblock cpu wait */
+	batch[i++] = MI_STORE_DWORD_IMM_GEN4;
+	batch[i++] = addr + GPUDW_READY;
+	batch[i++] = addr >> 32;
+	batch[i++] = READY_VAL;
+
+	/* Unblock after cpu started to spin */
+	batch[i++] = MI_SEMAPHORE_WAIT_CMD | MI_SEMAPHORE_POLL |
+		     MI_SEMAPHORE_SAD_NEQ_SDD | (4 - 2);
+	batch[i++] = 0;
+	batch[i++] = addr + CPUDW_INC;
+	batch[i++] = addr >> 32;
+
+	loop_addr = i;
+	batch[i++] = MI_STORE_DWORD_IMM_GEN4;
+	batch[i++] = addr + GPUDW_WRITE;
+	batch[i++] = addr >> 32;
+	batch[i++] = READY_VAL;
+
+	batch[i++] = MI_COND_BATCH_BUFFER_END | MI_DO_COMPARE | MAD_EQ_IDD | 2;
+	batch[i++] = READY_VAL;
+	batch[i++] = addr + GPUDW_READY;
+	batch[i++] = addr >> 32;
+
+	batch[i++] = MI_BATCH_BUFFER_START | 1 << 8 | 1;
+	batch[i++] = bb_addr + loop_addr * sizeof(uint32_t);
+	batch[i++] = bb_addr >> 32;
+
+	batch[i++] = MI_BATCH_BUFFER_END;
+
+	xe_for_each_engine(fd, hwe)
+		break;
+
+	exec_queue = xe_exec_queue_create(fd, vm, hwe, 0);
+	exec.exec_queue_id = exec_queue;
+	exec.address = bb_addr;
+	syncobj_reset(fd, &sync.handle, 1);
+	xe_exec(fd, &exec);
+
+	while(READ_ONCE(map[ready_idx]) != READY_VAL);
+
+	igt_until_timeout(2) {
+		WRITE_ONCE(map[inc_idx], map[inc_idx] + 1);
+		loops++;
+	}
+
+	WRITE_ONCE(map[ready_idx], FINISH_VAL);
+
+	igt_assert_eq(syncobj_wait_err(fd, &sync.handle, 1, INT64_MAX, 0), 0);
+
+	igt_debug("[%d]: %08x (cpu) [loops: %08x] | [%d]: %08x (gpu) | [%d]: %08x (ready)\n",
+		  inc_idx, map[inc_idx], loops, write_idx, map[write_idx],
+		  ready_idx, map[ready_idx]);
+
+	result = map[inc_idx] == loops;
+	gpu_exp_value = map[ready_idx];
+	igt_debug("got: %d, expected: %d\n", result, fs_entry->exp_result);
+
+	xe_vm_unbind_sync(fd, vm, 0, addr, size);
+	xe_vm_unbind_sync(fd, vm, 0, bb_addr, bb_size);
+	gem_munmap(batch, bb_size);
+	gem_munmap(map, size);
+	gem_close(fd, bo);
+	gem_close(fd, bb);
+
+	xe_vm_destroy(fd, vm);
+
+	igt_assert_eq(result, fs_entry->exp_result);
+	igt_assert_eq(gpu_exp_value, FINISH_VAL);
+}
+
+/**
+ * SUBTEST: false-sharing
+ * Test category: functionality test
+ * Description: Check cache line coherency on 1way/coh_none
+ */
+
+static void false_sharing(int fd)
+{
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint32_t graphics_ver = intel_get_device_info(dev_id)->graphics_ver;
+	bool is_dgfx = xe_has_vram(fd);
+
+	const struct fs_pat_entry *fs_entries;
+	int num_entries;
+
+	if (intel_graphics_ver(dev_id) == IP_VER(35, 11)) {
+		num_entries = ARRAY_SIZE(fs_xe3p_xpc);
+		fs_entries = fs_xe3p_xpc;
+	} else if (intel_graphics_ver(dev_id) == IP_VER(35, 10)) {
+		num_entries = ARRAY_SIZE(fs_xe3p_lpg);
+		fs_entries = fs_xe3p_lpg;
+	} else if (graphics_ver == 20) {
+		if (is_dgfx) {
+			num_entries = ARRAY_SIZE(fs_xe2_discrete);
+			fs_entries = fs_xe2_discrete;
+		} else {
+			num_entries = ARRAY_SIZE(fs_xe2_integrated);
+			fs_entries = fs_xe2_integrated;
+		}
+	} else {
+		num_entries = ARRAY_SIZE(fs_xe3);
+		fs_entries = fs_xe3;
+	}
+
+	for (int i = 0; i < num_entries; i++) {
+		igt_dynamic_f("%s", fs_entries[i].name) {
+			__false_sharing(fd, &fs_entries[i]);
+		}
+	}
+}
+
+static void reset(int sig)
+{
+	int configfs_fd;
+
+	igt_kmod_unbind("xe", bus_addr);
+
+	/* Drop all custom configfs settings from subtests */
+	configfs_fd = igt_configfs_open("xe");
+	if (configfs_fd >= 0)
+		igt_fs_remove_dir(configfs_fd, bus_addr);
+	close(configfs_fd);
+
+	/* Bind again a clean driver with no custom settings */
+	igt_kmod_bind("xe", bus_addr);
+}
+
+static void xa_app_transient_test(int configfs_device_fd, bool media_on)
+{
+	int fd, fw_handle, gt;
+
+	igt_kmod_unbind("xe", bus_addr);
+
+	if (media_on)
+		igt_assert(igt_sysfs_set(configfs_device_fd,
+					 "gt_types_allowed", "primary,media"));
+	else
+		igt_assert(igt_sysfs_set(configfs_device_fd,
+					 "gt_types_allowed", "primary"));
+
+	igt_kmod_bind("xe", bus_addr);
+
+	fd = drm_open_driver(DRIVER_XE);
+
+	/* Prevent entering C6 for the duration of the test, since this can result
+	 * in randomly flushing the entire device side caches, invalidating our XA
+	 * testing.
+	 */
+	fw_handle = igt_debugfs_open(fd, "forcewake_all", O_RDONLY);
+	igt_require(fw_handle >= 0);
+
+	subtest_pat_index_modes_with_regions(fd, xe3p_lpg_coherency_pat_index_modes,
+					     ARRAY_SIZE(xe3p_lpg_coherency_pat_index_modes));
+
+	/* check status of c state, it should not be in c6 due to forcewake. */
+	xe_for_each_gt(fd, gt)
+		igt_assert(!xe_gt_is_in_c6(fd, gt));
+
+	close(fw_handle);
+}
+
 static int opt_handler(int opt, int opt_index, void *data)
 {
 	switch (opt) {
@@ -1228,6 +1669,9 @@ int igt_main_args("V", NULL, help_str, opt_handler, NULL)
 
 		xe_device_get(fd);
 	}
+
+	igt_subtest("pat-sanity")
+		pat_sanity(fd);
 
 	igt_subtest("pat-index-all")
 		pat_index_all(fd);
@@ -1276,6 +1720,42 @@ int igt_main_args("V", NULL, help_str, opt_handler, NULL)
 
 	igt_subtest("display-vs-wb-transient")
 		display_vs_wb_transient(fd);
+
+	igt_subtest_with_dynamic("false-sharing") {
+		igt_require(intel_get_device_info(dev_id)->graphics_ver >= 20);
+
+		false_sharing(fd);
+	}
+
+	igt_subtest_group() {
+		int configfs_fd, configfs_device_fd;
+
+		igt_fixture() {
+			igt_require(intel_graphics_ver(dev_id) == IP_VER(35, 10));
+
+			pci_dev = igt_device_get_pci_device(fd);
+			snprintf(bus_addr, sizeof(bus_addr), "%04x:%02x:%02x.%01x",
+				 pci_dev->domain, pci_dev->bus, pci_dev->dev, pci_dev->func);
+
+			configfs_fd = igt_configfs_open("xe");
+			igt_require(configfs_fd != -1);
+			configfs_device_fd = igt_fs_create_dir(configfs_fd, bus_addr,
+							       S_IRWXU | S_IRGRP | S_IXGRP |
+							       S_IROTH | S_IXOTH);
+			igt_install_exit_handler(reset);
+		}
+
+		igt_subtest_with_dynamic("xa-app-transient-media-off")
+			xa_app_transient_test(configfs_device_fd, false);
+
+		igt_subtest_with_dynamic("xa-app-transient-media-on")
+			xa_app_transient_test(configfs_device_fd, true);
+
+		igt_fixture() {
+			close(configfs_device_fd);
+			close(configfs_fd);
+		}
+	}
 
 	igt_fixture()
 		drm_close_driver(fd);

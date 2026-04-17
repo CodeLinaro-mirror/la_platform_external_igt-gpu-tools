@@ -118,16 +118,17 @@ static void setup_output(data_t *data)
 {
 	igt_display_t *display = &data->display;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
-	for_each_pipe_with_valid_output(display, pipe, output) {
+	for_each_crtc_with_valid_output(display, crtc, output) {
 		drmModeConnectorPtr c = output->config.connector;
 
 		if (c->connector_type != DRM_MODE_CONNECTOR_eDP)
 			continue;
 
 		igt_display_reset(display);
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output,
+				    crtc);
 		if (!intel_pipe_output_combo_valid(display))
 			continue;
 
@@ -291,7 +292,7 @@ static void cleanup(data_t *data, igt_output_t *output)
 	igt_remove_fb(data->drm_fd, &data->fb[0]);
 }
 
-static int check_psr2_support(data_t *data, enum pipe pipe)
+static int check_psr2_support(data_t *data, igt_crtc_t *crtc)
 {
 	int status;
 
@@ -300,7 +301,7 @@ static int check_psr2_support(data_t *data, enum pipe pipe)
 
 	igt_display_reset(display);
 	output = data->output;
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	prepare(data, output);
 	status = psr_wait_entry(data->debugfs_fd, PSR_MODE_2, output);
@@ -312,11 +313,11 @@ static int check_psr2_support(data_t *data, enum pipe pipe)
 int igt_main()
 {
 	data_t data = {};
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	int r, i;
 	igt_output_t *outputs[IGT_MAX_PIPES * IGT_MAX_PIPES];
-	int pipes[IGT_MAX_PIPES * IGT_MAX_PIPES];
-	int n_pipes = 0;
+	igt_crtc_t *crtcs[IGT_MAX_PIPES * IGT_MAX_PIPES];
+	int n_crtcs = 0;
 
 	igt_fixture() {
 		struct itimerspec interval;
@@ -353,11 +354,12 @@ int igt_main()
 		r = timerfd_settime(data.change_screen_timerfd, 0, &interval, NULL);
 		igt_require_f(r != -1, "Error setting timerfd\n");
 
-		for_each_pipe_with_valid_output(&data.display, pipe, data.output) {
-			if (check_psr2_support(&data, pipe)) {
-				pipes[n_pipes] = pipe;
-				outputs[n_pipes] = data.output;
-				n_pipes++;
+		for_each_crtc_with_valid_output(&data.display, crtc,
+						data.output) {
+			if (check_psr2_support(&data, crtc)) {
+				crtcs[n_crtcs] = crtc;
+				outputs[n_crtcs] = data.output;
+				n_crtcs++;
 			}
 		}
 	}
@@ -369,10 +371,10 @@ int igt_main()
 			data.format = *format++;
 			igt_describe("Test that selective update works when screen changes");
 			igt_subtest_with_dynamic_f("%s-%s", op_str(data.op), igt_format_str(data.format)) {
-				for (i = 0; i < n_pipes; i++) {
-					igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipes[i]),
-							igt_output_name(outputs[i])) {
-						igt_output_set_pipe(outputs[i], pipes[i]);
+				for (i = 0; i < n_crtcs; i++) {
+					igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtcs[i]),
+						      igt_output_name(outputs[i])) {
+						igt_output_set_crtc(outputs[i], crtcs[i]);
 						if (data.op == FRONTBUFFER &&
 						    intel_display_ver(intel_get_drm_devid(data.drm_fd)) >= 12) {
 							/*

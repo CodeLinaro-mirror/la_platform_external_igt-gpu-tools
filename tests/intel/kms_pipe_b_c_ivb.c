@@ -98,25 +98,25 @@ drmModeModeInfo mode_2_lanes = {
 };
 
 static int
-disable_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+disable_crtc(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	igt_plane_t *primary;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	primary = igt_output_get_plane(output, 0);
 	igt_plane_set_fb(primary, NULL);
 	return igt_display_commit(&data->display);
 }
 
 static int
-set_mode_on_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+set_mode_on_crtc(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	igt_plane_t *primary;
 	drmModeModeInfo *mode;
 	struct igt_fb fb;
 	int fb_id;
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	mode = igt_output_get_mode(output);
 
@@ -133,36 +133,38 @@ set_mode_on_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 }
 
 static int
-set_big_mode_on_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+set_big_mode_on_crtc(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	igt_output_override_mode(output, &mode_3_lanes);
-	return set_mode_on_pipe(data, pipe, output);
+	return set_mode_on_crtc(data, crtc,
+				output);
 }
 
 static int
-set_normal_mode_on_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
+set_normal_mode_on_crtc(data_t *data, igt_crtc_t *crtc, igt_output_t *output)
 {
 	igt_output_override_mode(output, &mode_2_lanes);
-	return set_mode_on_pipe(data, pipe, output);
+	return set_mode_on_crtc(data, crtc,
+				output);
 }
 
 static void
 find_outputs(data_t *data, igt_output_t **output1, igt_output_t **output2)
 {
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
 	*output1 = NULL;
 	*output2 = NULL;
 
-	for_each_pipe_with_valid_output(&data->display, pipe, output) {
-		if (pipe == PIPE_B && !*output1 && output != *output2)
+	for_each_crtc_with_valid_output(&data->display, crtc, output) {
+		if (crtc->pipe == PIPE_B && !*output1 && output != *output2)
 			*output1 = output;
 
-		if (pipe == PIPE_C && output != *output1 && !*output2)
+		if (crtc->pipe == PIPE_C && output != *output1 && !*output2)
 			*output2 = output;
 
-		igt_output_set_pipe(output, PIPE_NONE);
+		igt_output_set_crtc(output, NULL);
 	}
 
 	igt_skip_on_f(!*output1 || !*output2, "Not enough connected outputs\n");
@@ -171,6 +173,8 @@ find_outputs(data_t *data, igt_output_t **output1, igt_output_t **output2)
 static void
 test_dpms(data_t *data)
 {
+	igt_crtc_t *crtc_b = igt_crtc_for_pipe(&data->display, PIPE_B);
+	igt_crtc_t *crtc_c = igt_crtc_for_pipe(&data->display, PIPE_C);
 	igt_output_t *output1, *output2;
 	int ret;
 
@@ -178,22 +182,28 @@ test_dpms(data_t *data)
 	find_outputs(data, &output1, &output2);
 
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_B), igt_output_name(output1));
+		 igt_crtc_name(crtc_b), igt_output_name(output1));
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_C), igt_output_name(output2));
+		 igt_crtc_name(crtc_c), igt_output_name(output2));
 
-	ret = set_big_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_big_mode_on_crtc(data,
+				   crtc_b,
+				   output1);
 	igt_assert_eq(ret, 0);
 
 	kmstest_set_connector_dpms(data->drm_fd, output1->config.connector, DRM_MODE_DPMS_OFF);
 
-	ret = set_big_mode_on_pipe(data, PIPE_C, output2);
+	ret = set_big_mode_on_crtc(data,
+				   crtc_c,
+				   output2);
 	igt_assert_neq(ret, 0);
 }
 
 static void
 test_lane_reduction(data_t *data)
 {
+	igt_crtc_t *crtc_b = igt_crtc_for_pipe(&data->display, PIPE_B);
+	igt_crtc_t *crtc_c = igt_crtc_for_pipe(&data->display, PIPE_C);
 	igt_output_t *output1, *output2;
 	int ret;
 
@@ -202,23 +212,31 @@ test_lane_reduction(data_t *data)
 	find_outputs(data, &output1, &output2);
 
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_B), igt_output_name(output1));
+		 igt_crtc_name(crtc_b), igt_output_name(output1));
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_C), igt_output_name(output2));
+		 igt_crtc_name(crtc_c), igt_output_name(output2));
 
-	ret = set_big_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_big_mode_on_crtc(data,
+				   crtc_b,
+				   output1);
 	igt_assert_eq(ret, 0);
 
-	ret = set_normal_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_normal_mode_on_crtc(data,
+				      crtc_b,
+				      output1);
 	igt_assert_eq(ret, 0);
 
-	ret = set_normal_mode_on_pipe(data, PIPE_C, output2);
+	ret = set_normal_mode_on_crtc(data,
+				      crtc_c,
+				      output2);
 	igt_assert_eq(ret, 0);
 }
 
 static void
 test_disable_pipe_B(data_t *data)
 {
+	igt_crtc_t *crtc_b = igt_crtc_for_pipe(&data->display, PIPE_B);
+	igt_crtc_t *crtc_c = igt_crtc_for_pipe(&data->display, PIPE_C);
 	igt_output_t *output1, *output2;
 	int ret;
 
@@ -226,26 +244,35 @@ test_disable_pipe_B(data_t *data)
 	find_outputs(data, &output1, &output2);
 
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_B), igt_output_name(output1));
+		 igt_crtc_name(crtc_b), igt_output_name(output1));
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_C), igt_output_name(output2));
+		 igt_crtc_name(crtc_c), igt_output_name(output2));
 
-	ret = set_big_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_big_mode_on_crtc(data,
+				   crtc_b,
+				   output1);
 	igt_assert_eq(ret, 0);
 
-	ret = disable_pipe(data, PIPE_B, output1);
+	ret = disable_crtc(data, crtc_b,
+			   output1);
 	igt_assert_eq(ret, 0);
 
-	ret = set_normal_mode_on_pipe(data, PIPE_C, output2);
+	ret = set_normal_mode_on_crtc(data,
+				      crtc_c,
+				      output2);
 	igt_assert_eq(ret, 0);
 
-	ret = set_normal_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_normal_mode_on_crtc(data,
+				      crtc_b,
+				      output1);
 	igt_assert_eq(ret, 0);
 }
 
 static void
 test_from_C_to_B_with_3_lanes(data_t *data)
 {
+	igt_crtc_t *crtc_b = igt_crtc_for_pipe(&data->display, PIPE_B);
+	igt_crtc_t *crtc_c = igt_crtc_for_pipe(&data->display, PIPE_C);
 	igt_output_t *output1, *output2;
 	int ret;
 
@@ -253,23 +280,30 @@ test_from_C_to_B_with_3_lanes(data_t *data)
 	find_outputs(data, &output1, &output2);
 
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_B), igt_output_name(output1));
+		 igt_crtc_name(crtc_b), igt_output_name(output1));
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_C), igt_output_name(output2));
+		 igt_crtc_name(crtc_c), igt_output_name(output2));
 
-	ret = set_normal_mode_on_pipe(data, PIPE_C, output2);
+	ret = set_normal_mode_on_crtc(data,
+				      crtc_c,
+				      output2);
 	igt_assert_eq(ret, 0);
 
-	ret = disable_pipe(data, PIPE_C, output2);
+	ret = disable_crtc(data, crtc_c,
+			   output2);
 	igt_assert_eq(ret, 0);
 
-	ret = set_big_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_big_mode_on_crtc(data,
+				   crtc_b,
+				   output1);
 	igt_assert_eq(ret, 0);
 }
 
 static void
 test_fail_enable_pipe_C_while_B_has_3_lanes(data_t *data)
 {
+	igt_crtc_t *crtc_b = igt_crtc_for_pipe(&data->display, PIPE_B);
+	igt_crtc_t *crtc_c = igt_crtc_for_pipe(&data->display, PIPE_C);
 	igt_output_t *output1, *output2;
 	int ret;
 
@@ -277,14 +311,18 @@ test_fail_enable_pipe_C_while_B_has_3_lanes(data_t *data)
 	find_outputs(data, &output1, &output2);
 
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_B), igt_output_name(output1));
+		 igt_crtc_name(crtc_b), igt_output_name(output1));
 	igt_info("Pipe %s will use connector %s\n",
-		 kmstest_pipe_name(PIPE_C), igt_output_name(output2));
+		 igt_crtc_name(crtc_c), igt_output_name(output2));
 
-	ret = set_big_mode_on_pipe(data, PIPE_B, output1);
+	ret = set_big_mode_on_crtc(data,
+				   crtc_b,
+				   output1);
 	igt_assert_eq(ret, 0);
 
-	ret = set_normal_mode_on_pipe(data, PIPE_C, output2);
+	ret = set_normal_mode_on_crtc(data,
+				      crtc_c,
+				      output2);
 	igt_assert_neq(ret, 0);
 }
 

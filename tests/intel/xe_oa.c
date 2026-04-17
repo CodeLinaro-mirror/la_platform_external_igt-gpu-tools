@@ -382,7 +382,7 @@ static struct intel_xe_perf_metric_set *oa_unit_metric_set(const struct drm_xe_o
 		  oau->oa_unit_type == DRM_XE_OA_UNIT_TYPE_OAM_SAG))
 		test_set_name = "MediaSet1";
 	else
-		igt_assert(!"reached");
+		igt_assert_f(!"reached", "Unknown oa_unit_type %d\n", oau->oa_unit_type);
 
 	igt_list_for_each_entry(metric_set_iter, &intel_xe_perf->metric_sets, link) {
 		if (strcmp(metric_set_iter->symbol_name, test_set_name) == 0) {
@@ -2757,12 +2757,6 @@ test_enable_disable(const struct drm_xe_oa_unit *oau)
 	stream_fd = __perf_open(drm_fd, &param, true /* prevent_pm */);
 	set_fd_flags(stream_fd, O_CLOEXEC | O_NONBLOCK);
 
-	errno = 0;
-	ret = read(stream_fd, buf, sizeof(buf));
-	igt_assert_eq(ret, -1);
-	get_stream_status(stream_fd);
-	igt_assert_eq(errno, EINVAL);
-
 	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_ENABLE, 0);
 
 	/*
@@ -2923,75 +2917,6 @@ test_non_sampling_read_error(void)
 	igt_assert_eq(ret, -1);
 	get_stream_status(stream_fd);
 	igt_assert_eq(errno, EINVAL);
-
-	__perf_close(stream_fd);
-}
-
-/**
- * SUBTEST: disabled-read-error
- * Description: Test that attempts to read from a stream while it is disable
- *		will return EINVAL instead of blocking indefinitely
- */
-static void
-test_disabled_read_error(void)
-{
-	int oa_exponent = 5; /* 5 micro seconds */
-	uint64_t properties[] = {
-		DRM_XE_OA_PROPERTY_OA_UNIT_ID, 0,
-
-		/* XXX: even without periodic sampling we have to
-		 * specify at least one sample layout property...
-		 */
-		DRM_XE_OA_PROPERTY_SAMPLE_OA, true,
-
-		/* OA unit configuration */
-		DRM_XE_OA_PROPERTY_OA_METRIC_SET, default_test_set->perf_oa_metrics_set,
-		DRM_XE_OA_PROPERTY_OA_FORMAT, __ff(default_test_set->perf_oa_format),
-		DRM_XE_OA_PROPERTY_OA_PERIOD_EXPONENT, oa_exponent,
-		DRM_XE_OA_PROPERTY_OA_DISABLED, true,
-	};
-	struct intel_xe_oa_open_prop param = {
-		.num_properties = ARRAY_SIZE(properties) / 2,
-		.properties_ptr = to_user_pointer(properties),
-	};
-	uint32_t oa_report0[64];
-	uint32_t oa_report1[64];
-	uint32_t buf[128] = { 0 };
-	int ret;
-
-	stream_fd = __perf_open(drm_fd, &param, false);
-
-	ret = read(stream_fd, buf, sizeof(buf));
-	igt_assert_eq(ret, -1);
-	get_stream_status(stream_fd);
-	igt_assert_eq(errno, EINVAL);
-
-	__perf_close(stream_fd);
-
-	properties[ARRAY_SIZE(properties) - 1] = false; /* Set DISABLED to false */
-	stream_fd = __perf_open(drm_fd, &param, false);
-        set_fd_flags(stream_fd, O_CLOEXEC);
-
-	read_2_oa_reports(default_test_set->perf_oa_format,
-			  oa_exponent,
-			  oa_report0,
-			  oa_report1,
-			  false); /* not just timer reports */
-
-	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_DISABLE, 0);
-
-	ret = read(stream_fd, buf, sizeof(buf));
-	igt_assert_eq(ret, -1);
-	get_stream_status(stream_fd);
-	igt_assert_eq(errno, EINVAL);
-
-	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_ENABLE, 0);
-
-	read_2_oa_reports(default_test_set->perf_oa_format,
-			  oa_exponent,
-			  oa_report0,
-			  oa_report1,
-			  false); /* not just timer reports */
 
 	__perf_close(stream_fd);
 }
@@ -4026,6 +3951,21 @@ static struct xe_oa_regs __oam_regs(u32 base)
 	};
 }
 
+static struct xe_oa_regs __oamert_regs(void)
+{
+	return (struct xe_oa_regs) {
+		.base		= 0,
+		.oa_head_ptr	= 0x1453ac,
+		.oa_tail_ptr	= 0x1453b0,
+		.oa_buffer	= 0x1453b4,
+		.oa_ctx_ctrl	= 0x1453c8,
+		.oa_ctrl	= 0x1453a0,
+		.oa_debug	= 0x1453a4,
+		.oa_status	= 0x1453a8,
+		.oa_mmio_trg	= 0x1453cc,
+	};
+}
+
 static struct xe_oa_regs oa_unit_regs(const struct drm_xe_oa_unit *oau)
 {
 	switch (oau->oa_unit_type) {
@@ -4041,6 +3981,8 @@ static struct xe_oa_regs oa_unit_regs(const struct drm_xe_oa_unit *oau)
 	}
 	case DRM_XE_OA_UNIT_TYPE_OAM_SAG:
 		return __oam_regs(XE_OAM_SAG_BASE_ADJ);
+	case DRM_XE_OA_UNIT_TYPE_MERT:
+		return __oamert_regs();
 	case DRM_XE_OA_UNIT_TYPE_OAG:
 		return __oag_regs();
 	default:
@@ -5137,8 +5079,6 @@ int igt_main_args("b:t", long_options, help_str, opt_handler, NULL)
 			test_non_zero_reason(oau, SZ_128K);
 	}
 
-	igt_subtest("disabled-read-error")
-		test_disabled_read_error();
 	igt_subtest("non-sampling-read-error")
 		test_non_sampling_read_error();
 

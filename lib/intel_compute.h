@@ -59,10 +59,16 @@ struct user_execenv {
 	bool skip_results_check;
 	/** @array_size: size of input and output arrays */
 	uint32_t array_size;
+	/** @input_bo: override default bo input handle if provided */
+	uint32_t input_bo;
+	/** @output_bo: override default bo output handle if provided */
+	uint32_t output_bo;
 	/** @input_addr: override default address of the input array if provided */
 	uint64_t input_addr;
 	/** @output_addr: override default address of the output array if provided */
 	uint64_t output_addr;
+	/** @loop_count: override default loop count if provided */
+	unsigned int loop_count;
 	/** @loop_kernel_duration: duration till kernel should execute in gpu **/
 	uint64_t loop_kernel_duration;
 };

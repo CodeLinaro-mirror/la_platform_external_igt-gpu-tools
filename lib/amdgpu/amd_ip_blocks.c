@@ -35,9 +35,14 @@ sdma_ring_write_linear(const struct amdgpu_ip_funcs *func,
 
 	i = 0;
 	j = 0;
+
+	/* Guard: write_length must be DWORD-aligned (bytes) */
+	igt_assert_f(ring_context->write_length % 4 == 0,
+		     "SDMA write_linear: write_length %lu not DWORD-aligned\n",
+		     (unsigned long)ring_context->write_length);
 	if (func->family_id == AMDGPU_FAMILY_SI)
 		ring_context->pm4[i++] = SDMA_PACKET_SI(SDMA_OPCODE_WRITE, 0, 0, 0,
-					 ring_context->write_length);
+					 ring_context->write_length / 4);
 	else
 		ring_context->pm4[i++] = SDMA_PACKET(SDMA_OPCODE_WRITE,
 					 SDMA_WRITE_SUB_OPCODE_LINEAR,
@@ -46,14 +51,20 @@ sdma_ring_write_linear(const struct amdgpu_ip_funcs *func,
 	ring_context->pm4[i++] = lower_32_bits(ring_context->bo_mc);
 	ring_context->pm4[i++] = upper_32_bits(ring_context->bo_mc);
 	if (func->family_id >= AMDGPU_FAMILY_AI)
-		ring_context->pm4[i++] = ring_context->write_length - 1;
+		ring_context->pm4[i++] = ring_context->write_length / 4 - 1;
 	else
-		ring_context->pm4[i++] = ring_context->write_length;
+		ring_context->pm4[i++] = ring_context->write_length / 4;
 
-	while (j++ < ring_context->write_length)
+	while (j++ < ring_context->write_length / 4)
 		ring_context->pm4[i++] = func->deadbeaf;
 
 	*pm4_dw = i;
+
+	/* Guard: ensure PM4 packet fits in allocated buffer */
+	if (ring_context->pm4_size > 0)
+		igt_assert_f(*pm4_dw <= ring_context->pm4_size,
+			     "SDMA write_linear: pm4_dw %u exceeds buffer %u\n",
+			     *pm4_dw, ring_context->pm4_size);
 
 	return 0;
 }
@@ -70,9 +81,9 @@ sdma_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 	j = 0;
 
 	if (cmd_error == CMD_STREAM_EXEC_INVALID_PACKET_LENGTH)
-		stream_length = ring_context->write_length / 16;
+		stream_length = ring_context->write_length / 4 / 16;
 	else
-		stream_length = ring_context->write_length;
+		stream_length = ring_context->write_length / 4;
 
 	if (cmd_error == CMD_STREAM_EXEC_INVALID_OPCODE)
 		opcode = 0xf2;
@@ -81,7 +92,7 @@ sdma_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 
 	if (func->family_id == AMDGPU_FAMILY_SI)
 		ring_context->pm4[i++] = SDMA_PACKET_SI(opcode, 0, 0, 0,
-					 ring_context->write_length);
+					 ring_context->write_length / 4);
 	else
 		ring_context->pm4[i++] = SDMA_PACKET(opcode,
 					 SDMA_WRITE_SUB_OPCODE_LINEAR,
@@ -97,9 +108,9 @@ sdma_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 		ring_context->pm4[i++] = upper_32_bits(ring_context->bo_mc);
 	}
 	if (func->family_id >= AMDGPU_FAMILY_AI)
-		ring_context->pm4[i++] = ring_context->write_length - 1;
+		ring_context->pm4[i++] = ring_context->write_length / 4 - 1;
 	else
-		ring_context->pm4[i++] = ring_context->write_length;
+		ring_context->pm4[i++] = ring_context->write_length / 4;
 
 	while (j++ < stream_length)
 		ring_context->pm4[i++] = func->deadbeaf;
@@ -232,14 +243,28 @@ gfx_ring_write_linear(const struct amdgpu_ip_funcs *func,
 	i = 0;
 	j = 0;
 
-	ring_context->pm4[i++] = PACKET3(PACKET3_WRITE_DATA, 2 +  ring_context->write_length);
+	/* Guard: write_length must be DWORD-aligned (bytes) */
+	igt_assert_f(ring_context->write_length % 4 == 0,
+		     "GFX write_linear: write_length %lu not DWORD-aligned\n",
+		     (unsigned long)ring_context->write_length);
+	if (ring_context->pm4_size > 0)
+		igt_assert_f(ring_context->write_length / 4 + 4 <= ring_context->pm4_size,
+			     "GFX write_linear: %lu DWORDs + 4 header > pm4 buffer %u\n",
+			     (unsigned long)(ring_context->write_length / 4),
+			     ring_context->pm4_size);
+
+	ring_context->pm4[i++] = PACKET3(PACKET3_WRITE_DATA, 2 + ring_context->write_length / 4);
 	ring_context->pm4[i++] = WRITE_DATA_DST_SEL(5) | WR_CONFIRM;
 	ring_context->pm4[i++] = lower_32_bits(ring_context->bo_mc);
 	ring_context->pm4[i++] = upper_32_bits(ring_context->bo_mc);
-	while (j++ < ring_context->write_length)
+	while (j++ < ring_context->write_length / 4)
 		ring_context->pm4[i++] = func->deadbeaf;
 
 	*pm4_dw = i;
+	if (ring_context->pm4_size > 0)
+		igt_assert_f(*pm4_dw <= ring_context->pm4_size,
+			     "GFX write_linear: pm4_dw %u exceeds buffer %u\n",
+			     *pm4_dw, ring_context->pm4_size);
 	return 0;
 }
 
@@ -582,22 +607,72 @@ int amdgpu_timeline_syncobj_wait(amdgpu_device_handle device_handle,
 	return r;
 }
 
+static
+int wait_for_packet_consumption(struct amdgpu_ring_context *ring_context)
+{
+	uint64_t count = 0;
+
+	while (*ring_context->rptr_cpu == *ring_context->wptr_cpu) {
+		if (count > 2000) {
+			igt_warn("Timeout waiting for bad packet consumption\n");
+			return -ETIMEDOUT;
+		}
+		count++;
+		usleep(1000);
+	}
+	return 0;
+}
+
+static
+int create_sync_signal(amdgpu_device_handle device,
+                             struct amdgpu_ring_context *ring_context,
+                             uint64_t timeout)
+{
+	uint32_t syncarray[1];
+	struct drm_amdgpu_userq_signal signal_data;
+	int r;
+
+	syncarray[0] = ring_context->timeline_syncobj_handle;
+	signal_data.queue_id = ring_context->queue_id;
+	signal_data.syncobj_handles = (uintptr_t)syncarray;
+	signal_data.num_syncobj_handles = 1;
+	signal_data.bo_read_handles = 0;
+	signal_data.bo_write_handles = 0;
+	signal_data.num_bo_read_handles = 0;
+	signal_data.num_bo_write_handles = 0;
+
+	r = amdgpu_userq_signal(device, &signal_data);
+	if (r)
+		return r;
+
+	return amdgpu_cs_syncobj_wait(device, &ring_context->timeline_syncobj_handle,
+				  1, timeout, DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, NULL);
+}
+
 static int
 user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_context,
 			      unsigned int ip_type, uint64_t mc_address)
 {
 	int r;
 	uint32_t control = ring_context->pm4_dw;
-	uint32_t syncarray[1];
-	struct drm_amdgpu_userq_signal signal_data;
-	uint64_t timeout = ring_context->time_out ? ring_context->time_out : INT64_MAX;
+	uint64_t timeout;
 	unsigned int nop_count;
+	struct timespec ts;
+	uint64_t current_ns;
+	unsigned int i, j;
+	uint64_t va, value;
+	unsigned num_fences_in_iter;
+	struct amdgpu_userq_params *userq_params;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	current_ns = (uint64_t)ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec;
+	timeout = current_ns + (60 * NSEC_PER_SEC);
 
 	if (ip_type == AMD_IP_DMA) {
 		amdgpu_sdma_pkt_begin();
 		/* For SDMA, we need to align the IB to 8 DW boundary */
 		nop_count = (2 - lower_32_bits(*ring_context->wptr_cpu)) & 7;
-		for (unsigned int i = 0; i < nop_count; i++)
+		for (i = 0; i < nop_count; i++)
 			amdgpu_pkt_add_dw(SDMA_PKT_HEADER_OP(SDMA_NOP));
 		amdgpu_pkt_add_dw(SDMA_PKT_HEADER_OP(SDMA_OP_INDIRECT));
 		amdgpu_pkt_add_dw(lower_32_bits(mc_address) & 0xffffffe0); // 32-byte aligned
@@ -613,6 +688,39 @@ user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_
 		amdgpu_sdma_pkt_end();
 	} else {
 		amdgpu_pkt_begin();
+
+		if (ring_context->userq_params) {
+			userq_params = ring_context->userq_params;
+
+			if (userq_params->job_start_write_data_va_addr) {
+				amdgpu_pkt_add_dw(PACKET3(PACKET3_WRITE_DATA, 4));
+				amdgpu_pkt_add_dw(WRITE_DATA_DST_SEL(5) | WR_CONFIRM | WRITE_DATA_CACHE_POLICY(3));
+				va = userq_params->job_start_write_data_va_addr;
+				value = userq_params->job_start_write_data_val;
+				amdgpu_pkt_add_dw(lower_32_bits(va));
+				amdgpu_pkt_add_dw(upper_32_bits(va));
+				amdgpu_pkt_add_dw(lower_32_bits(value));
+				amdgpu_pkt_add_dw(upper_32_bits(value));
+			}
+
+			if (ring_context->userq_params->num_fences) {
+				for (i = 0; i < userq_params->num_fences; i = i + ring_context->max_num_fences_fwm) {
+					num_fences_in_iter = (i + ring_context->max_num_fences_fwm > userq_params->num_fences) ?
+							     userq_params->num_fences - i : ring_context->max_num_fences_fwm;
+					amdgpu_pkt_add_dw(PACKET3(PACKET3_FENCE_WAIT_MULTI, num_fences_in_iter * 4));
+					amdgpu_pkt_add_dw(FWM_ENGINE_SEL(1) | FWM_POLL_INTERVAL(4));
+					for (j = 0; j < num_fences_in_iter; j++) {
+						va = userq_params->fence_info[i + j].va;
+						value = userq_params->fence_info[i + j].value;
+						amdgpu_pkt_add_dw(lower_32_bits(va));
+						amdgpu_pkt_add_dw(upper_32_bits(va));
+						amdgpu_pkt_add_dw(lower_32_bits(value));
+						amdgpu_pkt_add_dw(upper_32_bits(value));
+					}
+				}
+			}
+		}
+
 		/* Prepare the Indirect IB to submit the IB to user queue */
 		amdgpu_pkt_add_dw(PACKET3(PACKET3_INDIRECT_BUFFER, 2));
 		amdgpu_pkt_add_dw(lower_32_bits(mc_address));
@@ -640,21 +748,17 @@ user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_
 #endif
 	ring_context->doorbell_cpu[DOORBELL_INDEX] = *ring_context->wptr_cpu;
 
-	/* Add a fence packet for signal */
-	syncarray[0] = ring_context->timeline_syncobj_handle;
-	signal_data.queue_id = ring_context->queue_id;
-	signal_data.syncobj_handles = (uintptr_t)syncarray;
-	signal_data.num_syncobj_handles = 1;
-	signal_data.bo_read_handles = 0;
-	signal_data.bo_write_handles = 0;
-	signal_data.num_bo_read_handles = 0;
-	signal_data.num_bo_write_handles = 0;
-
-	r = amdgpu_userq_signal(device, &signal_data);
-	igt_assert_eq(r, 0);
-
-	r = amdgpu_cs_syncobj_wait(device, &ring_context->timeline_syncobj_handle, 1, timeout,
-				DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, NULL);
+	switch (ring_context->submit_mode) {
+	case UQ_SUBMIT_NO_SYNC:
+		/* Error injection: wait for packet consumption without sync */
+		r = wait_for_packet_consumption(ring_context);
+		break;
+	case UQ_SUBMIT_NORMAL:
+	default:
+		/* Standard submission with full synchronization */
+		r = create_sync_signal(device, ring_context, timeout);
+		break;
+	}
 	return r;
 }
 
@@ -1830,4 +1934,88 @@ const char *cmd_get_ip_name(enum amd_ip_block_type ip_type)
 	default:
 		return "Unknown";
 	}
+}
+
+bool is_spx_mode(const struct pci_addr *pci)
+{
+	char path[256];
+	char buffer[16] = {0};
+	FILE *fp;
+
+	snprintf(path, sizeof(path), "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/current_compute_partition",
+		 pci->domain, pci->bus, pci->device, pci->function);
+
+	/* If file doesn't exist, assume SPX or non-partitioned capable */
+	if (access(path, R_OK) != 0)
+		return true;
+
+	fp = fopen(path, "r");
+	if (!fp)
+		return true;
+
+	if (fgets(buffer, sizeof(buffer), fp)) {
+		if (strstr(buffer, "SPX")) {
+			fclose(fp);
+			return true;
+		}
+	}
+	fclose(fp);
+	return false;
+}
+
+long amdgpu_get_ip_schedule_mask(const struct pci_addr *pci, enum amd_ip_block_type ip_type, char *sysfs_path)
+{
+	char sysfs_local[256];
+	char *sysfs = sysfs_path ? sysfs_path : sysfs_local;
+	char cmd[512];
+	char buffer[128];
+	FILE *fp;
+	long sched_mask = 0;
+	int dri_id;
+	const char *mask_name = NULL;
+
+	switch (ip_type) {
+	case AMD_IP_GFX:
+		mask_name = "amdgpu_gfx_sched_mask";
+		break;
+	case AMD_IP_COMPUTE:
+		mask_name = "amdgpu_compute_sched_mask";
+		break;
+	case AMD_IP_DMA:
+		mask_name = "amdgpu_sdma_sched_mask";
+		break;
+	case AMD_IP_VCN_UNIFIED:
+		mask_name = "amdgpu_vcn_sched_mask";
+		break;
+	case AMD_IP_VCN_JPEG:
+		mask_name = "amdgpu_jpeg_sched_mask";
+		break;
+	default:
+		return 0;
+	}
+
+	snprintf(sysfs, 256, "/sys/kernel/debug/dri/%04x:%02x:%02x.%01x/%s",
+		 pci->domain, pci->bus, pci->device, pci->function, mask_name);
+
+	if (access(sysfs, F_OK) != 0) {
+		dri_id = find_dri_id_by_pci(pci);
+		if (dri_id < 0)
+			dri_id = 0;
+
+		snprintf(sysfs, 256, "/sys/kernel/debug/dri/%d/%s", dri_id, mask_name);
+	}
+
+	if (access(sysfs, R_OK) != 0)
+		return 1;
+
+	snprintf(cmd, sizeof(cmd) - 1, "sudo cat %s", sysfs);
+
+	fp = popen(cmd, "r");
+	if (fp) {
+		if (fgets(buffer, sizeof(buffer), fp))
+			sched_mask = strtol(buffer, NULL, 16);
+		pclose(fp);
+	}
+
+	return sched_mask;
 }

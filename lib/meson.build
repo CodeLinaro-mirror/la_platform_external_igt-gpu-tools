@@ -44,6 +44,7 @@ lib_sources = [
 	'igt_stats.c',
 	'igt_syncobj.c',
 	'igt_sysfs.c',
+	'igt_sysfs_choice.c',
 	'igt_sysrq.c',
 	'igt_taints.c',
 	'igt_thread.c',
@@ -116,6 +117,7 @@ lib_sources = [
 	'igt_eld.c',
 	'igt_infoframe.c',
 	'igt_color.c',
+	'igt_color_lut.c',
 	'veboxcopy_gen12.c',
 	'igt_msm.c',
 	'igt_dsc.c',
@@ -126,6 +128,7 @@ lib_sources = [
 	'xe/xe_mmio.c',
 	'xe/xe_query.c',
 	'xe/xe_spin.c',
+	'xe/xe_sriov_admin.c',
 	'xe/xe_sriov_debugfs.c',
 	'xe/xe_sriov_provisioning.c',
 	'xe/xe_util.c',
@@ -138,6 +141,7 @@ lib_deps = [
 	libdrm,
 	libdw,
 	libkmod,
+	libpci,
 	libudev,
 	math,
 	pciaccess,
@@ -177,6 +181,7 @@ if libdrm_amdgpu.found()
 		'amdgpu/amd_mem_leak.c',
 		'amdgpu/amd_mmd_shared.c',
 		'amdgpu/amd_jpeg_shared.c',
+		'amdgpu/amd_utils.c',
 		'amdgpu/amd_vcn_shared.c'
 	]
 	if libdrm_amdgpu.version().version_compare('> 2.4.99')
@@ -257,7 +262,7 @@ lib_version = vcs_tag(input : 'version.h.in', output : 'version.h',
 		      fallback : 'NO-GIT',
 		      command : vcs_command )
 
-iga64_assembly_sources = [ 'gpgpu_shader.c', 'gpgpu_fill.c', '../tests/intel/xe_eudebug_online.c' ]
+iga64_assembly_sources = [ 'gpgpu_shader.c', 'gpgpu_fill.c', '../tests/intel/xe_eudebug_online.c', '../tests/intel/xe_prefetch_fault.c']
 libiga64_asms = static_library('iga64_asms',
 	iga64_assembly_sources,
 	include_directories: inc,
@@ -331,6 +336,7 @@ lib_igt_perf = declare_dependency(link_with : lib_igt_perf_build,
 
 scan_dep = [
 	glib,
+	libpci,
 	libudev,
 ]
 

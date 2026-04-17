@@ -72,20 +72,18 @@ typedef struct {
 } dither_status_t;
 
 /* Prepare test data. */
-static void prepare_test(data_t *data, igt_output_t *output, enum pipe p)
+static void prepare_test(data_t *data, igt_output_t *output, igt_crtc_t *crtc)
 {
-	igt_pipe_t *pipe = &data->display.pipes[p];
-
-	igt_assert(pipe);
+	igt_assert(crtc);
 
 	data->primary =
-		igt_pipe_get_plane_type(pipe, DRM_PLANE_TYPE_PRIMARY);
+		igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY);
 
-	igt_output_set_pipe(output, p);
+	igt_output_set_crtc(output, crtc);
 }
 
 /* Returns the current state of dithering from the crtc debugfs. */
-static dither_status_t get_dither_state(data_t *data, enum pipe pipe)
+static dither_status_t get_dither_state(data_t *data, igt_crtc_t *crtc)
 {
 	char buf[512], tmp[5];
 	char *start_loc;
@@ -105,12 +103,12 @@ static dither_status_t get_dither_state(data_t *data, enum pipe pipe)
 	igt_assert_eq(sscanf(start_loc, ", dither=%s", tmp), 1);
 	status.dither = !strcmp(tmp, "yes,");
 
-	status.bpc = igt_get_pipe_current_bpc(data->drm_fd, pipe);
+	status.bpc = igt_get_crtc_current_bpc(crtc);
 
 	return status;
 }
 
-static void test_dithering(data_t *data, enum pipe pipe,
+static void test_dithering(data_t *data, igt_crtc_t *crtc,
 			   igt_output_t *output,
 			   int fb_bpc, int fb_format,
 			   int output_bpc)
@@ -121,8 +119,8 @@ static void test_dithering(data_t *data, enum pipe pipe,
 	bool constraint;
 
 	igt_info("Dithering test execution on %s PIPE_%s\n",
-			output->name, kmstest_pipe_name(pipe));
-	prepare_test(data, output, pipe);
+			output->name, igt_crtc_name(crtc));
+	prepare_test(data, output, crtc);
 
 	igt_assert(igt_create_fb(data->drm_fd, 512, 512, fb_format,
 				 DRM_FORMAT_MOD_LINEAR, &data->fb));
@@ -142,7 +140,10 @@ static void test_dithering(data_t *data, enum pipe pipe,
 	if (ret)
 		goto cleanup;
 
-	constraint = igt_max_bpc_constraint(display, pipe, output, output_bpc);
+	constraint = igt_max_bpc_constraint(display,
+					    crtc,
+					    output,
+					    output_bpc);
 	if (!constraint)
 		goto cleanup;
 
@@ -153,7 +154,8 @@ static void test_dithering(data_t *data, enum pipe pipe,
 	 * If fb_bpc is greater than output_bpc, Dithering should be enabled
 	 * Else disabled
 	 */
-	status = get_dither_state(data, pipe);
+	status = get_dither_state(data,
+				  crtc);
 
 	igt_info("FB BPC:%d, Panel BPC:%d, Pipe BPC:%d, Expected Dither:%s, Actual result:%s\n",
 		  fb_bpc, output_bpc, status.bpc,
@@ -168,7 +170,7 @@ static void test_dithering(data_t *data, enum pipe pipe,
 cleanup:
 	igt_output_set_prop_value(output, IGT_CONNECTOR_MAX_BPC, bpc);
 	igt_plane_set_fb(data->primary, NULL);
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(display, display->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 	igt_remove_fb(data->drm_fd, &data->fb);
 
@@ -203,7 +205,7 @@ run_dither_test(data_t *data, int fb_bpc, int fb_format, int output_bpc)
 	igt_display_reset(display);
 
 	for_each_connected_output(display, output) {
-		enum pipe pipe;
+		igt_crtc_t *crtc;
 
 		if (!is_supported(output)) {
 			igt_info("Output %s: Doesn't support \"max bpc\" property.\n",
@@ -211,24 +213,29 @@ run_dither_test(data_t *data, int fb_bpc, int fb_format, int output_bpc)
 			continue;
 		}
 
-		if (igt_get_output_max_bpc(data->drm_fd, output->name) < output_bpc) {
+		if (igt_get_output_max_bpc(output) < output_bpc) {
 			igt_info("Output %s: Doesn't support %d-bpc.\n",
 				 igt_output_name(output), output_bpc);
 			continue;
 		}
 
-		for_each_pipe(display, pipe) {
-			igt_output_set_pipe(output, pipe);
+		for_each_crtc(display, crtc) {
+			igt_output_set_crtc(output,
+					    crtc);
 
 			if (!intel_pipe_output_combo_valid(display)) {
-				igt_output_set_pipe(output, PIPE_NONE);
+				igt_output_set_crtc(output, NULL);
 				continue;
 			}
 
 			igt_dynamic_f("pipe-%s-%s",
-					      kmstest_pipe_name(pipe), output->name)
-				test_dithering(data, pipe, output, fb_bpc,
-							   fb_format, output_bpc);
+					      igt_crtc_name(crtc),
+					      output->name)
+				test_dithering(data,
+					       crtc,
+					       output,
+					       fb_bpc,
+					       fb_format, output_bpc);
 
 			/* One pipe is enough */
 			break;

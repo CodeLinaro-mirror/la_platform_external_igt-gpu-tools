@@ -85,7 +85,7 @@ static int block_plane(igt_display_t *display, igt_output_t *output, enum plane_
 		signal(SIGCONT, SIG_IGN);
 
 		if (test_type == test_legacy_modeset || test_type == test_atomic_modeset) {
-			igt_output_set_pipe(output, PIPE_NONE);
+			igt_output_set_crtc(output, NULL);
 		}
 		igt_plane_set_fence_fd(plane, sw_sync_timeline_create_fence(timeline, 1));
 
@@ -111,7 +111,8 @@ static drmEventContext drm_events = {
 	.page_flip_handler = ev_page_flip
 };
 
-static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t *output,
+static void run_plane_test(igt_display_t *display, igt_crtc_t *crtc,
+			   igt_output_t *output,
 			   enum plane_test_type test_type, unsigned plane_type)
 {
 	drmModeModeInfo *mode;
@@ -120,7 +121,7 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 	int block;
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(pipe), igt_output_name(output));
+		 igt_crtc_name(crtc), igt_output_name(output));
 
 	/*
 	 * Make sure we start with everything disabled to force a real modeset.
@@ -130,7 +131,7 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 	igt_display_reset(display);
 	igt_display_commit2(display, COMMIT_ATOMIC);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 	plane = igt_output_get_plane_type(output, plane_type);
@@ -177,29 +178,29 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 	igt_while_interruptible(true) {
 		switch (test_type) {
 			case test_legacy_modeset: {
-				struct drm_mode_crtc crtc = {
+				struct drm_mode_crtc drm_crtc = {
 					.set_connectors_ptr = (uint64_t)(uintptr_t)&output->id,
 					.count_connectors = 1,
-					.crtc_id = primary->pipe->crtc_id,
+					.crtc_id = primary->crtc->crtc_id,
 					.fb_id = fb2.fb_id,
 					.mode_valid = 1,
 					.mode = *(struct drm_mode_modeinfo*)mode,
 				};
 
-				do_ioctl(display->drm_fd, DRM_IOCTL_MODE_SETCRTC, &crtc);
+				do_ioctl(display->drm_fd, DRM_IOCTL_MODE_SETCRTC, &drm_crtc);
 				break;
 			}
 			case test_atomic_modeset: {
 				uint32_t objs[3] = {
-					plane->pipe->crtc_id,
+					plane->crtc->crtc_id,
 					output->id,
 					plane->drm_plane->plane_id
 				};
 				uint32_t count_props[3] = { 2, 1, 6 };
 				uint32_t props[] = {
 					/* crtc: 2 props */
-					plane->pipe->props[IGT_CRTC_MODE_ID],
-					plane->pipe->props[IGT_CRTC_ACTIVE],
+					plane->crtc->props[IGT_CRTC_MODE_ID],
+					plane->crtc->props[IGT_CRTC_ACTIVE],
 					/* connector: 1 prop */
 					output->props[IGT_CONNECTOR_CRTC_ID],
 					/* plane: remainder props */
@@ -215,9 +216,9 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 					0, /* mode_id, filled in below */
 					true,
 					/* connector */
-					plane->pipe->crtc_id,
+					plane->crtc->crtc_id,
 					/* plane */
-					plane->pipe->crtc_id,
+					plane->crtc->crtc_id,
 					fb2.fb_id,
 					IGT_FIXED(fb2.width, 0),
 					IGT_FIXED(fb2.height, 0),
@@ -256,7 +257,7 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 			case test_setcursor: {
 				struct drm_mode_cursor cur = {
 					.flags = DRM_MODE_CURSOR_BO,
-					.crtc_id = plane->pipe->crtc_id,
+					.crtc_id = plane->crtc->crtc_id,
 					.width = fb2.width,
 					.height = fb2.height,
 					.handle = fb2.gem_handle,
@@ -267,7 +268,7 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 			case test_setplane: {
 				struct drm_mode_set_plane setplane = {
 					.plane_id = plane->drm_plane->plane_id,
-					.crtc_id = plane->pipe->crtc_id,
+					.crtc_id = plane->crtc->crtc_id,
 					.fb_id = fb2.fb_id,
 					.crtc_w = fb2.width,
 					.crtc_h = fb2.height,
@@ -280,7 +281,7 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 			}
 			case test_pageflip: {
 				struct drm_mode_crtc_page_flip pageflip = {
-					.crtc_id = plane->pipe->crtc_id,
+					.crtc_id = plane->crtc->crtc_id,
 					.fb_id = fb2.fb_id,
 					.flags = DRM_MODE_PAGE_FLIP_EVENT,
 				};
@@ -297,26 +298,26 @@ static void run_plane_test(igt_display_t *display, enum pipe pipe, igt_output_t 
 
 	/* The mode is unset by the forked helper, force a refresh here */
 	if (test_type == test_legacy_modeset || test_type == test_atomic_modeset)
-		igt_pipe_refresh(display, pipe, true);
+		igt_crtc_refresh(crtc, true);
 
 	igt_plane_set_fb(plane, NULL);
 	igt_plane_set_fb(primary, NULL);
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 	igt_display_commit2(display, COMMIT_ATOMIC);
 	igt_remove_fb(display->drm_fd, &fb);
 }
 
-static bool pipe_output_combo_valid(igt_display_t *display,
-				    enum pipe pipe, igt_output_t *output)
+static bool crtc_output_combo_valid(igt_display_t *display, igt_crtc_t *crtc,
+				    igt_output_t *output)
 {
 	bool ret = true;
 
 	igt_display_reset(display);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	if (!intel_pipe_output_combo_valid(display))
 		ret = false;
-	igt_output_set_pipe(output, PIPE_NONE);
+	igt_output_set_crtc(output, NULL);
 
 	return ret;
 }
@@ -325,7 +326,7 @@ int igt_main()
 {
 	igt_display_t display;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 
 	igt_fixture() {
 		display.drm_fd = drm_open_driver_master(DRIVER_ANY);
@@ -341,84 +342,119 @@ int igt_main()
 
 	igt_describe("Tests the interrupt properties of legacy modeset");
 	igt_subtest_with_dynamic("legacy-setmode") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_legacy_modeset, DRM_PLANE_TYPE_PRIMARY);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_legacy_modeset,
+					       DRM_PLANE_TYPE_PRIMARY);
 			break;
 		}
 	}
 
 	igt_describe("Tests the interrupt properties of atomic modeset");
 	igt_subtest_with_dynamic("atomic-setmode") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_atomic_modeset, DRM_PLANE_TYPE_PRIMARY);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_atomic_modeset,
+					       DRM_PLANE_TYPE_PRIMARY);
 			break;
 		}
 	}
 
 	igt_describe("Tests the interrupt properties for DPMS");
 	igt_subtest_with_dynamic("legacy-dpms") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_legacy_dpms, DRM_PLANE_TYPE_PRIMARY);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_legacy_dpms,
+					       DRM_PLANE_TYPE_PRIMARY);
 			break;
 		}
 	}
 
 	igt_describe("Tests the interrupt properties for pageflip");
 	igt_subtest_with_dynamic("legacy-pageflip") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_pageflip, DRM_PLANE_TYPE_PRIMARY);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_pageflip,
+					       DRM_PLANE_TYPE_PRIMARY);
 			break;
 		}
 	}
 
 	igt_describe("Tests the interrupt properties for cursor");
 	igt_subtest_with_dynamic("legacy-cursor") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_setcursor, DRM_PLANE_TYPE_CURSOR);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_setcursor,
+					       DRM_PLANE_TYPE_CURSOR);
 			break;
 		}
 	}
 
 	igt_describe("Tests the interrupt properties for primary plane");
 	igt_subtest_with_dynamic("universal-setplane-primary") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_setplane, DRM_PLANE_TYPE_PRIMARY);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_setplane,
+					       DRM_PLANE_TYPE_PRIMARY);
 			break;
 		}
 	}
 
 	igt_describe("Tests the interrupt properties for cursor plane");
 	igt_subtest_with_dynamic("universal-setplane-cursor") {
-		for_each_pipe_with_valid_output(&display, pipe, output) {
-			if (!pipe_output_combo_valid(&display, pipe, output))
+		for_each_crtc_with_valid_output(&display, crtc, output) {
+			if (!crtc_output_combo_valid(&display, crtc, output))
 				continue;
 
-			igt_dynamic_f("pipe-%s-%s", kmstest_pipe_name(pipe), igt_output_name(output))
-				run_plane_test(&display, pipe, output, test_setplane, DRM_PLANE_TYPE_CURSOR);
+			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
+				      igt_output_name(output))
+				run_plane_test(&display,
+					       crtc,
+					       output,
+					       test_setplane,
+					       DRM_PLANE_TYPE_CURSOR);
 			break;
 		}
 	}

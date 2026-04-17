@@ -292,14 +292,14 @@ static void cleanup_crtc(data_t *data)
 	igt_display_reset(display);
 }
 
-static void prepare_crtc(data_t *data, igt_output_t *output, enum pipe pipe,
+static void prepare_crtc(data_t *data, igt_output_t *output, igt_crtc_t *crtc,
 			 igt_plane_t *plane, bool start_crc)
 {
 	igt_display_t *display = &data->display;
 
 	cleanup_crtc(data);
 
-	igt_output_set_pipe(output, pipe);
+	igt_output_set_crtc(output, crtc);
 	igt_require(intel_pipe_output_combo_valid(display));
 
 	igt_plane_set_rotation(plane, IGT_ROTATION_0);
@@ -312,7 +312,7 @@ static void prepare_crtc(data_t *data, igt_output_t *output, enum pipe pipe,
 	 */
 	if (!is_amdgpu_device(data->gfx_fd))
 		igt_display_commit2(display, COMMIT_ATOMIC);
-	data->pipe_crc = igt_pipe_crc_new(data->gfx_fd, pipe,
+	data->pipe_crc = igt_crtc_crc_new(crtc,
 				          IGT_PIPE_CRC_SOURCE_AUTO);
 
 	if (!is_amdgpu_device(data->gfx_fd) && start_crc)
@@ -461,7 +461,7 @@ static void prepare_fbs(data_t *data, igt_output_t *output,
 		igt_plane_set_position(plane, data->pos_x, data->pos_y);
 }
 
-static void test_single_case(data_t *data, enum pipe pipe,
+static void test_single_case(data_t *data, igt_crtc_t *crtc,
 			     igt_output_t *output, igt_plane_t *plane,
 			     enum rectangle_type rect,
 			     uint32_t format, bool test_bad_format)
@@ -470,7 +470,8 @@ static void test_single_case(data_t *data, enum pipe pipe,
 	igt_crc_t crc_output;
 	int ret;
 
-	igt_debug("Testing case %i on pipe %s, format %s\n", rect, kmstest_pipe_name(pipe), igt_format_str(format));
+	igt_debug("Testing case %i on pipe %s, format %s\n", rect,
+		  igt_crtc_name(crtc), igt_format_str(format));
 	prepare_fbs(data, output, plane, rect, format);
 
 	igt_plane_set_rotation(plane, data->rotation);
@@ -587,7 +588,7 @@ static void test_plane_rotation(data_t *data, int plane_type, bool test_bad_form
 	igt_display_t *display = &data->display;
 	drmModeModeInfo *mode;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	int pipe_count = 0, connected_outputs = 0;
 	bool found = false;
 
@@ -603,13 +604,13 @@ static void test_plane_rotation(data_t *data, int plane_type, bool test_bad_form
 	for_each_connected_output(&data->display, output)
 		connected_outputs++;
 
-	for_each_pipe_with_valid_output(display, pipe, output) {
+	for_each_crtc_with_valid_output(display, crtc, output) {
 		igt_plane_t *plane;
 		int i, j, c;
 
 		igt_display_reset(display);
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output, crtc);
 		if (!intel_pipe_output_combo_valid(display))
 			continue;
 
@@ -647,12 +648,14 @@ static void test_plane_rotation(data_t *data, int plane_type, bool test_bad_form
 			break;
 		pipe_count++;
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output, crtc);
 
 		plane = igt_output_get_plane_type(output, plane_type);
 		igt_require(plane_rotation_requirements(data, plane));
 
-		prepare_crtc(data, output, pipe, plane, true);
+		prepare_crtc(data, output,
+			     crtc,
+			     plane, true);
 
 		for (i = 0; i < num_rectangle_types; i++) {
 			/* Unsupported on intel */
@@ -684,13 +687,17 @@ static void test_plane_rotation(data_t *data, int plane_type, bool test_bad_form
 					if (!test_format(data, &tested_formats, format))
 						continue;
 
-					test_single_case(data, pipe, output, plane, i,
+					test_single_case(data,
+							 crtc,
+							 output, plane, i,
 							 format, test_bad_format);
 				}
 
 				igt_vec_fini(&tested_formats);
 			} else {
-				test_single_case(data, pipe, output, plane, i,
+				test_single_case(data,
+						 crtc,
+						 output, plane, i,
 						 data->override_fmt, test_bad_format);
 			}
 		}
@@ -901,7 +908,7 @@ static bool reusecrcfromlastround(planeinfos p[2], int lastroundp1format,
  * It is left here if this test ever was wanted to be run on
  * different pipes.
  */
-static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
+static void test_multi_plane_rotation(data_t *data, igt_crtc_t *crtc)
 {
 	igt_display_t *display = &data->display;
 	igt_output_t *output;
@@ -935,12 +942,15 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 
 	igt_display_require_output(display);
 
-	for_each_valid_output_on_pipe(display, pipe, output) {
+	for_each_valid_output_on_crtc(display,
+				      crtc,
+				      output) {
 		int i, j, k, l, flipsw, fliphw;
 
 		igt_display_reset(display);
 
-		igt_output_set_pipe(output, pipe);
+		igt_output_set_crtc(output,
+				    crtc);
 		if (!intel_pipe_output_combo_valid(display))
 			continue;
 
@@ -952,7 +962,7 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 		p[0].plane = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 		p[1].plane = igt_output_get_plane_type(output, DRM_PLANE_TYPE_OVERLAY);
 
-		data->pipe_crc = igt_pipe_crc_new(data->gfx_fd, pipe,
+		data->pipe_crc = igt_crtc_crc_new(crtc,
 						  IGT_PIPE_CRC_SOURCE_AUTO);
 		igt_pipe_crc_start(data->pipe_crc);
 
@@ -1012,7 +1022,8 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 								continue;
 
 							igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-							flipsw = kmstest_get_vblank(data->gfx_fd, pipe, 0) + 1;
+							flipsw = igt_crtc_get_vblank(crtc,
+										     0) + 1;
 							have_crc = false;
 						}
 
@@ -1025,7 +1036,8 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 							continue;
 
 						igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-						fliphw = kmstest_get_vblank(data->gfx_fd, pipe, 0) + 1;
+						fliphw = igt_crtc_get_vblank(crtc,
+									     0) + 1;
 
 						if (!have_crc) {
 							igt_pipe_crc_get_for_frame(data->gfx_fd,
@@ -1079,7 +1091,7 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 		lastroundirotation = 0;
 		lastroundjrotation = 0;
 
-		igt_output_set_pipe(output, PIPE_NONE);
+		igt_output_set_crtc(output, NULL);
 	}
 	data->pipe_crc = NULL;
 
@@ -1093,8 +1105,7 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 	igt_require_f(found, "No valid pipe/output combo found.\n");
 }
 
-static void test_plane_rotation_exhaust_fences(data_t *data,
-					       enum pipe pipe,
+static void test_plane_rotation_exhaust_fences(data_t *data, igt_crtc_t *crtc,
 					       igt_output_t *output,
 					       igt_plane_t *plane)
 {
@@ -1113,7 +1124,9 @@ static void test_plane_rotation_exhaust_fences(data_t *data,
 	igt_require(igt_plane_has_rotation(plane, IGT_ROTATION_0 | IGT_ROTATION_90));
 	igt_require(gem_available_fences(display->drm_fd) > 0);
 
-	prepare_crtc(data, output, pipe, plane, false);
+	prepare_crtc(data, output,
+		     crtc, plane,
+		     false);
 
 	mode = igt_output_get_mode(output);
 	w = mode->hdisplay;
@@ -1301,6 +1314,8 @@ int igt_main_args("", long_opts, help_str, opt_handler, &data)
 
 	igt_describe("Rotation test on both planes by making them fully visible");
 	igt_subtest_f("multiplane-rotation") {
+		igt_crtc_t *crtc = igt_first_crtc(&data.display);
+
 		igt_require(gen >= 9);
 		cleanup_crtc(&data);
 		data.planepos[0].origo = p_top | p_left;
@@ -1309,12 +1324,14 @@ int igt_main_args("", long_opts, help_str, opt_handler, &data)
 		data.planepos[1].origo = p_top | p_right;
 		data.planepos[1].x = -.4f;
 		data.planepos[1].y = .1f;
-		test_multi_plane_rotation(&data, 0);
+		test_multi_plane_rotation(&data, crtc);
 	}
 
 	igt_describe("Rotation test on both planes by cropping left/top corner of primary plane and"
 			"right/top corner of sprite plane");
 	igt_subtest_f("multiplane-rotation-cropping-top") {
+		igt_crtc_t *crtc = igt_first_crtc(&data.display);
+
 		igt_require(gen >= 9);
 		cleanup_crtc(&data);
 		data.planepos[0].origo = p_top | p_left;
@@ -1323,12 +1340,14 @@ int igt_main_args("", long_opts, help_str, opt_handler, &data)
 		data.planepos[1].origo = p_top | p_right;
 		data.planepos[1].x = -.15f;
 		data.planepos[1].y = -.15f;
-		test_multi_plane_rotation(&data, 0);
+		test_multi_plane_rotation(&data, crtc);
 	}
 
 	igt_describe("Rotation test on both planes by cropping left/bottom corner of primary plane"
 			"and right/bottom corner of sprite plane");
 	igt_subtest_f("multiplane-rotation-cropping-bottom") {
+		igt_crtc_t *crtc = igt_first_crtc(&data.display);
+
 		igt_require(gen >= 9);
 		cleanup_crtc(&data);
 		data.planepos[0].origo = p_bottom | p_left;
@@ -1337,7 +1356,7 @@ int igt_main_args("", long_opts, help_str, opt_handler, &data)
 		data.planepos[1].origo = p_bottom | p_right;
 		data.planepos[1].x = -.15f;
 		data.planepos[1].y = -.20f;
-		test_multi_plane_rotation(&data, 0);
+		test_multi_plane_rotation(&data, crtc);
 	}
 
 	/*
@@ -1346,16 +1365,18 @@ int igt_main_args("", long_opts, help_str, opt_handler, &data)
 	 */
 	igt_describe("This test intends to check for fence leaks exhaustively");
 	igt_subtest_f("exhaust-fences") {
-		enum pipe pipe;
+		igt_crtc_t *crtc;
 		igt_output_t *output;
 
 		igt_require_intel(data.gfx_fd);
 		igt_display_require_output(&data.display);
 
-		for_each_pipe_with_valid_output(&data.display, pipe, output) {
-			igt_plane_t *primary = &data.display.pipes[pipe].planes[0];
+		for_each_crtc_with_valid_output(&data.display, crtc, output) {
+			igt_plane_t *primary = &crtc->planes[0];
 
-			test_plane_rotation_exhaust_fences(&data, pipe, output, primary);
+			test_plane_rotation_exhaust_fences(&data,
+							   crtc,
+							   output, primary);
 			break;
 		}
 	}

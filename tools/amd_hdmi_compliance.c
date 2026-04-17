@@ -33,8 +33,7 @@ typedef struct data {
 	igt_display_t display;
 	igt_plane_t *primary;
 	igt_output_t *output;
-	igt_pipe_t *pipe;
-	enum pipe pipe_id;
+	igt_crtc_t *crtc;
 	bool use_virtual_connector;
 	int timeout_seconds;
 } data_t;
@@ -384,8 +383,7 @@ static void test_init(data_t *data, int conn_id)
 {
 	igt_display_t *display = &data->display;
 
-	data->pipe_id = PIPE_A;
-	data->pipe = &data->display.pipes[data->pipe_id];
+	data->crtc = igt_first_crtc(&data->display);
 
 	igt_display_reset(display);
 
@@ -407,9 +405,10 @@ static void test_init(data_t *data, int conn_id)
 	igt_require_f(data->output, "No valid connectors found\n");
 
 	data->primary =
-		igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_PRIMARY);
+		igt_crtc_get_plane_type(data->crtc, DRM_PLANE_TYPE_PRIMARY);
 
-	igt_output_set_pipe(data->output, data->pipe_id);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	if (data->timeout_seconds > 0) {
 		struct sigaction sa;

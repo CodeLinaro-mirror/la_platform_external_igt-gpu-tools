@@ -30,11 +30,10 @@ typedef struct data {
 	igt_display_t display;
 	igt_plane_t *primary;
 	igt_output_t *output;
-	igt_pipe_t *pipe;
+	igt_crtc_t *crtc;
 	igt_pipe_crc_t *pipe_crc;
 	igt_pipe_crc_t *pipe_crc_dither;
 	drmModeModeInfo *mode;
-	enum pipe pipe_id;
 	int fd;
 	int w;
 	int h;
@@ -55,8 +54,7 @@ static void test_init(data_t *data)
 	igt_display_t *display = &data->display;
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->pipe_id = PIPE_A;
-	data->pipe = &data->display.pipes[data->pipe_id];
+	data->crtc = igt_first_crtc(&data->display);
 
 	igt_display_reset(display);
 
@@ -76,16 +74,17 @@ static void test_init(data_t *data)
 
 	data->mode = igt_output_get_mode(data->output);
 	igt_assert(data->mode);
-	igt_assert_output_bpc_equal(data->fd, data->pipe_id,
-				    data->output->name, 8);
+	igt_assert_output_bpc_equal(data->crtc,
+				    data->output, 8);
 
 	data->primary =
-		igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_PRIMARY);
+		igt_crtc_get_plane_type(data->crtc, DRM_PLANE_TYPE_PRIMARY);
 
-	data->pipe_crc = igt_pipe_crc_new(data->fd, data->pipe_id,
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	igt_output_set_pipe(data->output, data->pipe_id);
+	igt_output_set_crtc(data->output,
+			    data->crtc);
 
 	data->w = data->mode->hdisplay;
 	data->h = data->mode->vdisplay;
